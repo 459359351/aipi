@@ -1,0 +1,262 @@
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>3D 动态词云</title>
+    <meta charset="utf-8">
+    <script src="https://www.goat1000.com/tagcanvas.min.js" type="text/javascript"></script>
+    <style>
+      body { font-family: sans-serif; background-color: #f0f0f0; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+      #myCanvasContainer { width: 800px; height: 600px; background-color: white; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+      h1 { color: #333; margin-bottom: 20px; }
+    </style>
+    <script type="text/javascript">
+      window.onload = function() {
+        try {
+          TagCanvas.Start('myCanvas','tags',{
+            textColour: null,
+            outlineColour: '#ff00ff',
+            reverse: true,
+            depth: 0.8,
+            maxSpeed: 0.05,
+            textFont: 'PingFang SC, Microsoft YaHei, sans-serif',
+            textHeight: 25,
+            wheelZoom: true,
+            shape: 'sphere',
+            initial: [0.1,-0.1],
+            freezeActive: true,
+            shuffleTags: true,
+            pulsateTo: 0.8,
+            shadow: '#ccf',
+            shadowBlur: 3,
+            weight: true,
+            weightMode: 'size',
+            weightSize: 1.0,
+            weightGradient: {
+             0:    '#f00', // red
+             0.33: '#ff0', // yellow
+             0.66: '#0f0', // green
+             1:    '#00f'  // blue
+            }
+          });
+        } catch(e) {
+          // something went wrong, hide the canvas container
+          document.getElementById('myCanvasContainer').style.display = 'none';
+        }
+      };
+    </script>
+  </head>
+  <body>
+    <h1>3D 动态词云展现</h1>
+    <div id="myCanvasContainer">
+      <canvas width="800" height="600" id="myCanvas">
+        <p>Your browser does not support the canvas tag.</p>
+      </canvas>
+    </div>
+    <div id="tags" style="display: none;">
+      <ul>
+        <li><a href="#" style="font-size: 60.0ex">党支部</a></li>
+<li><a href="#" style="font-size: 52.303515683324065ex">答案</a></li>
+<li><a href="#" style="font-size: 31.51518607218399ex">党员</a></li>
+<li><a href="#" style="font-size: 30.942488333853177ex">ABCD</a></li>
+<li><a href="#" style="font-size: 27.184582489294375ex">入党</a></li>
+<li><a href="#" style="font-size: 26.296923806019052ex">预备党员</a></li>
+<li><a href="#" style="font-size: 23.783103382879812ex">工作</a></li>
+<li><a href="#" style="font-size: 23.294297050117237ex">党建</a></li>
+<li><a href="#" style="font-size: 21.20415626849705ex">包括</a></li>
+<li><a href="#" style="font-size: 19.32846507308946ex">审查</a></li>
+<li><a href="#" style="font-size: 18.977633289669505ex">积极分子</a></li>
+<li><a href="#" style="font-size: 18.974797175537912ex">建设</a></li>
+<li><a href="#" style="font-size: 18.92538880177164ex">发展党员</a></li>
+<li><a href="#" style="font-size: 18.207854419758043ex">党小组</a></li>
+<li><a href="#" style="font-size: 17.909294061060063ex">文化</a></li>
+<li><a href="#" style="font-size: 17.849163309760932ex">一局</a></li>
+<li><a href="#" style="font-size: 17.20890932291099ex">党委</a></li>
+<li><a href="#" style="font-size: 17.201284028656318ex">委员会</a></li>
+<li><a href="#" style="font-size: 16.593973239137117ex">五项</a></li>
+<li><a href="#" style="font-size: 16.414261926361043ex">一般</a></li>
+<li><a href="#" style="font-size: 16.304017887155076ex">项目</a></li>
+<li><a href="#" style="font-size: 16.26470255617853ex">中建</a></li>
+<li><a href="#" style="font-size: 16.180129797167886ex">支部</a></li>
+<li><a href="#" style="font-size: 16.1388470760823ex">政治</a></li>
+<li><a href="#" style="font-size: 15.979222976067923ex">上级</a></li>
+<li><a href="#" style="font-size: 15.418110025191758ex">组织</a></li>
+<li><a href="#" style="font-size: 15.375078254981243ex">对象</a></li>
+<li><a href="#" style="font-size: 15.351754630939272ex">预备期</a></li>
+<li><a href="#" style="font-size: 15.307127752694637ex">坚持</a></li>
+<li><a href="#" style="font-size: 15.279371508558794ex">党员大会</a></li>
+<li><a href="#" style="font-size: 15.27620200175472ex">党组织</a></li>
+<li><a href="#" style="font-size: 15.10317488207324ex">发展</a></li>
+<li><a href="#" style="font-size: 14.992964099258872ex">五个</a></li>
+<li><a href="#" style="font-size: 14.94950866907211ex">廉洁</a></li>
+<li><a href="#" style="font-size: 14.93267662654248ex">落实</a></li>
+<li><a href="#" style="font-size: 14.903554476806514ex">30</a></li>
+<li><a href="#" style="font-size: 14.903554476806514ex">20</a></li>
+<li><a href="#" style="font-size: 14.903554476806514ex">10</a></li>
+<li><a href="#" style="font-size: 14.807278841302242ex">管理</a></li>
+<li><a href="#" style="font-size: 14.785779739414227ex">制度</a></li>
+<li><a href="#" style="font-size: 14.542968147510525ex">价值</a></li>
+<li><a href="#" style="font-size: 14.527960330232826ex">组织生活</a></li>
+<li><a href="#" style="font-size: 14.439530960577162ex">方面</a></li>
+<li><a href="#" style="font-size: 14.434326280648616ex">应当</a></li>
+<li><a href="#" style="font-size: 14.409643765463098ex">总部</a></li>
+<li><a href="#" style="font-size: 14.280035636185636ex">创造</a></li>
+<li><a href="#" style="font-size: 14.231513941481587ex">委员</a></li>
+<li><a href="#" style="font-size: 14.229971000527987ex">每季度</a></li>
+<li><a href="#" style="font-size: 14.118896047215275ex">召开</a></li>
+<li><a href="#" style="font-size: 14.07135278142766ex">考察</a></li>
+<li><a href="#" style="font-size: 14.061764068870454ex">人数</a></li>
+<li><a href="#" style="font-size: 14.036487043047241ex">申请书</a></li>
+<li><a href="#" style="font-size: 13.947047813687364ex">目标</a></li>
+<li><a href="#" style="font-size: 13.922668354410238ex">要求</a></li>
+<li><a href="#" style="font-size: 13.85933004692459ex">群众</a></li>
+<li><a href="#" style="font-size: 13.841061314986561ex">内容</a></li>
+<li><a href="#" style="font-size: 13.83429221967007ex">155</a></li>
+<li><a href="#" style="font-size: 13.83429221967007ex">12</a></li>
+<li><a href="#" style="font-size: 13.83429221967007ex">15</a></li>
+<li><a href="#" style="font-size: 13.83429221967007ex">XX</a></li>
+<li><a href="#" style="font-size: 13.83429221967007ex">24</a></li>
+<li><a href="#" style="font-size: 13.83429221967007ex">ABCDE</a></li>
+<li><a href="#" style="font-size: 13.83429221967007ex">ABC</a></li>
+<li><a href="#" style="font-size: 13.83429221967007ex">党日</a></li>
+<li><a href="#" style="font-size: 13.83429221967007ex">AB</a></li>
+<li><a href="#" style="font-size: 13.808456581453486ex">履行</a></li>
+<li><a href="#" style="font-size: 13.69605710904772ex">原则</a></li>
+<li><a href="#" style="font-size: 13.673837416946785ex">教育</a></li>
+<li><a href="#" style="font-size: 13.632492193514654ex">基本</a></li>
+<li><a href="#" style="font-size: 13.583051679856448ex">监督</a></li>
+<li><a href="#" style="font-size: 13.548690339690978ex">宣传</a></li>
+<li><a href="#" style="font-size: 13.502113028490365ex">加强</a></li>
+<li><a href="#" style="font-size: 13.484788214565315ex">做好</a></li>
+<li><a href="#" style="font-size: 13.468735712078185ex">一年</a></li>
+<li><a href="#" style="font-size: 13.46231202752186ex">团组织</a></li>
+<li><a href="#" style="font-size: 13.446387952828882ex">推动</a></li>
+<li><a href="#" style="font-size: 13.435640481612685ex">讨论</a></li>
+<li><a href="#" style="font-size: 13.415885243031619ex">书记</a></li>
+<li><a href="#" style="font-size: 13.413365338464864ex">以下</a></li>
+<li><a href="#" style="font-size: 13.404624552831901ex">流程</a></li>
+<li><a href="#" style="font-size: 13.338364457403303ex">接收</a></li>
+<li><a href="#" style="font-size: 13.317736233573001ex">转正</a></li>
+<li><a href="#" style="font-size: 13.266905983251137ex">党员干部</a></li>
+<li><a href="#" style="font-size: 13.253374024130565ex">联系人</a></li>
+<li><a href="#" style="font-size: 13.233926795672117ex">体系</a></li>
+<li><a href="#" style="font-size: 13.228905129233649ex">每月</a></li>
+<li><a href="#" style="font-size: 13.210100726746239ex">学习</a></li>
+<li><a href="#" style="font-size: 13.208887487545988ex">党的建设</a></li>
+<li><a href="#" style="font-size: 13.201546379180215ex">先锋</a></li>
+<li><a href="#" style="font-size: 13.19897059872982ex">战略</a></li>
+<li><a href="#" style="font-size: 13.195021529905476ex">哪些</a></li>
+<li><a href="#" style="font-size: 13.187606150883022ex">材料</a></li>
+<li><a href="#" style="font-size: 13.141636518371397ex">全面</a></li>
+<li><a href="#" style="font-size: 13.135423891200798ex">情况</a></li>
+<li><a href="#" style="font-size: 13.113123436991685ex">汇报思想</a></li>
+<li><a href="#" style="font-size: 13.112141767392712ex">执行</a></li>
+<li><a href="#" style="font-size: 13.106164164035182ex">选举</a></li>
+<li><a href="#" style="font-size: 13.062280525137597ex">超过</a></li>
+<li><a href="#" style="font-size: 13.040879067647586ex">半年</a></li>
+<li><a href="#" style="font-size: 13.017364680214044ex">资源配置</a></li>
+<li><a href="#" style="font-size: 13.015577424775634ex">服务</a></li>
+<li><a href="#" style="font-size: 12.999643802445787ex">培养</a></li>
+<li><a href="#" style="font-size: 12.981534603657352ex">意识形态</a></li>
+<li><a href="#" style="font-size: 12.980276787187938ex">正式</a></li>
+<li><a href="#" style="font-size: 12.956719661991963ex">报告</a></li>
+<li><a href="#" style="font-size: 12.93341259222081ex">底线</a></li>
+<li><a href="#" style="font-size: 12.93208094189617ex">从业</a></li>
+<li><a href="#" style="font-size: 12.926106587103735ex">规范</a></li>
+<li><a href="#" style="font-size: 12.849939908901504ex">完成</a></li>
+<li><a href="#" style="font-size: 12.825219684012255ex">培养教育</a></li>
+<li><a href="#" style="font-size: 12.825219684012255ex">党课</a></li>
+<li><a href="#" style="font-size: 12.788714304196443ex">开展</a></li>
+<li><a href="#" style="font-size: 12.782300720017167ex">纪律</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">11</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">13</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">14</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">16</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">17</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">18</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">19</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">21</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">22</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">23</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">25</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">26</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">27</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">28</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">29</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">31</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">32</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">33</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">ABD</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">深植</a></li>
+<li><a href="#" style="font-size: 12.765029962533626ex">选树</a></li>
+<li><a href="#" style="font-size: 12.697058378282936ex">考核</a></li>
+<li><a href="#" style="font-size: 12.668731988879946ex">引领</a></li>
+<li><a href="#" style="font-size: 12.641036565159833ex">闭环</a></li>
+<li><a href="#" style="font-size: 12.638246440276056ex">任务</a></li>
+<li><a href="#" style="font-size: 12.628694798832965ex">党总支</a></li>
+<li><a href="#" style="font-size: 12.620557971046928ex">撤销</a></li>
+<li><a href="#" style="font-size: 12.61714984744285ex">党龄</a></li>
+<li><a href="#" style="font-size: 12.61714984744285ex">三会</a></li>
+<li><a href="#" style="font-size: 12.615611711371452ex">遵循</a></li>
+<li><a href="#" style="font-size: 12.58260426472984ex">培训</a></li>
+<li><a href="#" style="font-size: 12.560183360185459ex">党的基本</a></li>
+<li><a href="#" style="font-size: 12.560137534635887ex">研究</a></li>
+<li><a href="#" style="font-size: 12.544929699972492ex">决议</a></li>
+<li><a href="#" style="font-size: 12.544415526897803ex">单位</a></li>
+<li><a href="#" style="font-size: 12.507813578230682ex">理论</a></li>
+<li><a href="#" style="font-size: 12.50711967648646ex">领导</a></li>
+<li><a href="#" style="font-size: 12.505735897505728ex">重点</a></li>
+<li><a href="#" style="font-size: 12.504701401441285ex">应到</a></li>
+<li><a href="#" style="font-size: 12.504701401441285ex">严肃查处</a></li>
+<li><a href="#" style="font-size: 12.485537569117431ex">三个</a></li>
+<li><a href="#" style="font-size: 12.472086871831852ex">表决权</a></li>
+<li><a href="#" style="font-size: 12.471003916897011ex">部门</a></li>
+<li><a href="#" style="font-size: 12.45776845931871ex">人才队伍</a></li>
+<li><a href="#" style="font-size: 12.448822362275635ex">舆情</a></li>
+<li><a href="#" style="font-size: 12.448822362275635ex">八项</a></li>
+<li><a href="#" style="font-size: 12.448822362275635ex">简述</a></li>
+<li><a href="#" style="font-size: 12.426777850714286ex">职能</a></li>
+<li><a href="#" style="font-size: 12.416277189711009ex">强化</a></li>
+<li><a href="#" style="font-size: 12.39756178227194ex">会议</a></li>
+<li><a href="#" style="font-size: 12.39142808073488ex">本人</a></li>
+<li><a href="#" style="font-size: 12.389883587560629ex">支部书记</a></li>
+<li><a href="#" style="font-size: 12.386514172511966ex">一个月</a></li>
+<li><a href="#" style="font-size: 12.360968429424144ex">一课</a></li>
+<li><a href="#" style="font-size: 12.351847339378793ex">调整</a></li>
+<li><a href="#" style="font-size: 12.33137558834112ex">设置</a></li>
+<li><a href="#" style="font-size: 12.327730457918648ex">必须</a></li>
+<li><a href="#" style="font-size: 12.293319073028238ex">进行</a></li>
+<li><a href="#" style="font-size: 12.252668970428552ex">以上</a></li>
+<li><a href="#" style="font-size: 12.252137377578242ex">格局</a></li>
+<li><a href="#" style="font-size: 12.246572679425832ex">指派</a></li>
+<li><a href="#" style="font-size: 12.245990227605176ex">品牌</a></li>
+<li><a href="#" style="font-size: 12.245169655296426ex">志愿</a></li>
+<li><a href="#" style="font-size: 12.242396194166245ex">责任制</a></li>
+<li><a href="#" style="font-size: 12.238374002325118ex">临时</a></li>
+<li><a href="#" style="font-size: 12.238314998301536ex">诉求</a></li>
+<li><a href="#" style="font-size: 12.233014324277203ex">六个月</a></li>
+<li><a href="#" style="font-size: 12.22777302056873ex">及时</a></li>
+<li><a href="#" style="font-size: 12.203760659639705ex">意见</a></li>
+<li><a href="#" style="font-size: 12.187189654504746ex">榜样</a></li>
+<li><a href="#" style="font-size: 12.132721209289494ex">半数</a></li>
+<li><a href="#" style="font-size: 12.121425103388612ex">提升</a></li>
+<li><a href="#" style="font-size: 12.10707298031719ex">全局</a></li>
+<li><a href="#" style="font-size: 12.10323959092237ex">班子</a></li>
+<li><a href="#" style="font-size: 12.092016833933817ex">综合</a></li>
+<li><a href="#" style="font-size: 12.087516634817424ex">贯彻落实</a></li>
+<li><a href="#" style="font-size: 12.079037101451805ex">职权</a></li>
+<li><a href="#" style="font-size: 12.078825655896207ex">标准</a></li>
+<li><a href="#" style="font-size: 12.077388383242424ex">议事</a></li>
+<li><a href="#" style="font-size: 12.065200429743383ex">资源</a></li>
+<li><a href="#" style="font-size: 12.062223920018008ex">确定</a></li>
+<li><a href="#" style="font-size: 12.056258032238995ex">竣工</a></li>
+<li><a href="#" style="font-size: 12.055100910041018ex">经营</a></li>
+<li><a href="#" style="font-size: 12.034326357595049ex">投票</a></li>
+<li><a href="#" style="font-size: 12.02716158554086ex">三级</a></li>
+<li><a href="#" style="font-size: 12.01517822275426ex">路径</a></li>
+<li><a href="#" style="font-size: 12.0ex">成效</a></li>
+      </ul>
+    </div>
+  </body>
+</html>
+    

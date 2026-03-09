@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文档上传 - 知识处理服务</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+    <div class="min-h-screen">
+        <!-- 顶部导航 -->
+        <nav class="bg-white shadow-sm border-b">
+            <div class="max-w-6xl mx-auto px-4 py-4">
+                <div class="flex items-center justify-between">
+                    <h1 class="text-2xl font-bold text-gray-800">AI 知识处理服务</h1>
+                    <div class="space-x-4 text-sm">
+                        <a href="/static/index.html" class="text-gray-600 hover:text-blue-600">首页</a>
+                        <a href="/static/upload.html" class="text-blue-600 font-medium">上传文档</a>
+                        <a href="/static/list.html" class="text-gray-600 hover:text-blue-600">文档列表</a>
+                        <a href="/static/generate.html" class="text-gray-600 hover:text-blue-600">AI 出题</a>
+                        <a href="/static/practice.html" class="text-gray-600 hover:text-blue-600">模拟答题</a>
+                        <a href="/static/recommend-admin.html" class="text-gray-600 hover:text-blue-600">推荐管理</a>
+                        <a href="/static/tags.html" class="text-gray-600 hover:text-blue-600">标签管理</a>
+                        <a href="/docs" class="text-gray-600 hover:text-blue-600">API 文档</a>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 主内容区 -->
+        <div class="max-w-3xl mx-auto px-4 py-8">
+            <div class="bg-white rounded-lg shadow-md p-8">
+                <h2 class="text-xl font-semibold mb-6 text-gray-800">上传文档</h2>
+                
+                <form id="uploadForm" class="space-y-6">
+                    <!-- 文件选择 -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                            选择文件 <span class="text-red-500">*</span>
+                        </label>
+                        <input type="file" id="fileInput" accept=".pdf,.docx,.doc,.txt" required
+                            class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                        <p class="mt-1 text-xs text-gray-500">支持 PDF、Word、TXT 格式</p>
+                    </div>
+
+                    <!-- 文档名称 -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                            文档名称 <span class="text-red-500">*</span>
+                        </label>
+                        <input type="text" id="docName" required
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+
+                    <!-- 两列布局 -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <!-- 文档类型 -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">文档类型</label>
+                            <select id="docType" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">请选择</option>
+                                <option value="规章制度">规章制度</option>
+                                <option value="管理办法">管理办法</option>
+                                <option value="通知通报">通知通报</option>
+                                <option value="工作方案">工作方案</option>
+                                <option value="会议纪要">会议纪要</option>
+                                <option value="学习资料">学习资料</option>
+                                <option value="政策法规">政策法规</option>
+                                <option value="其他">其他</option>
+                            </select>
+                        </div>
+
+                        <!-- 业务领域（党建业务方向） -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">业务领域</label>
+                            <select id="businessDomain" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">请选择</option>
+                                <option value="企业战略与经营管理">企业战略与经营管理</option>
+                                <option value="党的基本制度理论及相关要求">党的基本制度理论及相关要求</option>
+                                <option value="企业文化">企业文化</option>
+                                <option value="组织建设">组织建设</option>
+                                <option value="党员发展教育">党员发展教育</option>
+                                <option value="党风廉政建设">党风廉政建设</option>
+                                <option value="宣传工作">宣传工作</option>
+                                <option value="CI工作">CI工作</option>
+                                <option value="舆情工作">舆情工作</option>
+                                <option value="工会工作">工会工作</option>
+                                <option value="共青团工作">共青团工作</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <!-- 组织维度 -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">组织维度</label>
+                            <input type="text" id="orgDimension" placeholder="如：总部机关 / 分公司党支部 / 项目党支部"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+
+                        <!-- 版本号 -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">版本号</label>
+                            <input type="text" id="version" placeholder="如：v1.0"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <!-- 生效日期 -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">生效日期</label>
+                            <input type="date" id="effectiveDate"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+
+                        <!-- 安全等级 -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">安全等级</label>
+                            <select id="securityLevel" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="internal">内部</option>
+                                <option value="public">公开</option>
+                                <option value="confidential">机密</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 上传用户 -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">上传用户</label>
+                        <input type="text" id="uploadUser" placeholder="用户标识"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+
+                    <!-- 提交按钮 -->
+                    <div class="flex items-center justify-end space-x-4">
+                        <button type="button" onclick="resetForm()"
+                            class="px-6 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">
+                            重置
+                        </button>
+                        <button type="submit" id="submitBtn"
+                            class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                            上传文档
+                        </button>
+                    </div>
+                </form>
+
+                <!-- 上传进度 -->
+                <div id="progressContainer" class="mt-6 hidden">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm font-medium text-gray-700">上传中...</span>
+                        <span id="progressText" class="text-sm text-gray-600">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div id="progressBar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <!-- 结果提示 -->
+                <div id="resultContainer" class="mt-6 hidden">
+                    <div id="resultMessage" class="p-4 rounded-md"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('uploadForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const resultContainer = document.getElementById('resultContainer');
+        const resultMessage = document.getElementById('resultMessage');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showResult('请选择文件', 'error');
+                return;
+            }
+
+            // 准备表单数据
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('doc_name', document.getElementById('docName').value);
+            
+            const docType = document.getElementById('docType').value;
+            if (docType) formData.append('doc_type', docType);
+            
+            const businessDomain = document.getElementById('businessDomain').value;
+            if (businessDomain) formData.append('business_domain', businessDomain);
+            
+            const orgDimension = document.getElementById('orgDimension').value;
+            if (orgDimension) formData.append('org_dimension', orgDimension);
+            
+            const version = document.getElementById('version').value;
+            if (version) formData.append('version', version);
+            
+            const effectiveDate = document.getElementById('effectiveDate').value;
+            if (effectiveDate) formData.append('effective_date', effectiveDate);
+            
+            formData.append('security_level', document.getElementById('securityLevel').value);
+            
+            const uploadUser = document.getElementById('uploadUser').value;
+            if (uploadUser) formData.append('upload_user', uploadUser);
+
+            // 显示进度条
+            progressContainer.classList.remove('hidden');
+            resultContainer.classList.add('hidden');
+            submitBtn.disabled = true;
+
+            try {
+                const response = await fetch('/api/v1/documents/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showResult(`✅ 上传成功！文档 ID: ${data.id}<br>状态: ${data.status}<br>${data.message}`, 'success');
+                    setTimeout(() => {
+                        window.location.href = '/static/list.html';
+                    }, 2000);
+                } else {
+                    showResult(`❌ 上传失败: ${data.detail || '未知错误'}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ 网络错误: ${error.message}`, 'error');
+            } finally {
+                progressContainer.classList.add('hidden');
+                submitBtn.disabled = false;
+            }
+        });
+
+        function showResult(message, type) {
+            resultContainer.classList.remove('hidden');
+            resultMessage.innerHTML = message;
+            
+            if (type === 'success') {
+                resultMessage.className = 'p-4 rounded-md bg-green-50 text-green-800 border border-green-200';
+            } else {
+                resultMessage.className = 'p-4 rounded-md bg-red-50 text-red-800 border border-red-200';
+            }
+        }
+
+        function resetForm() {
+            form.reset();
+            resultContainer.classList.add('hidden');
+        }
+    </script>
+</body>
+</html>

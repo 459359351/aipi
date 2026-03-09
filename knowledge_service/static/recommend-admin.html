@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>推荐管理 - 知识处理服务</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <nav class="bg-white shadow-sm border-b">
+        <div class="max-w-6xl mx-auto px-4 py-3">
+            <div class="flex items-center justify-between">
+                <h1 class="text-xl font-semibold text-gray-800">推荐管理</h1>
+                <div class="space-x-4 text-sm">
+                    <a href="/static/index.html" class="text-gray-700 hover:text-blue-600">首页</a>
+                    <a href="/static/upload.html" class="text-gray-700 hover:text-blue-600">上传文档</a>
+                    <a href="/static/list.html" class="text-gray-700 hover:text-blue-600">文档列表</a>
+                    <a href="/static/generate.html" class="text-gray-700 hover:text-blue-600">AI 出题</a>
+                    <a href="/static/practice.html" class="text-gray-700 hover:text-blue-600">模拟答题</a>
+                    <a href="/static/tags.html" class="text-gray-700 hover:text-blue-600">标签管理</a>
+                    <a href="/docs" class="text-gray-700 hover:text-blue-600">API 文档</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-3xl mx-auto px-4 py-8">
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-2">人工题目 · 知识点关联</h2>
+            <p class="text-sm text-gray-600 mb-4">
+                题库中 <code class="bg-gray-100 px-1 rounded">document_id</code> 为空的题目为人工作业题，与文档/知识点无直接关联。
+                点击下方按钮后，系统会调用 LLM 结合题干与答案/解析提炼 1~3 个知识点，写入
+                <code class="bg-gray-100 px-1 rounded">knowledge_points</code>，并建立
+                <code class="bg-gray-100 px-1 rounded">question_knowledge_rel</code> 关联，便于「按错题推荐」时也能召回相关人工题。
+                同时，标签将优先匹配预设标签；无法匹配的会作为候选标签写入 <code class="bg-gray-100 px-1 rounded">tags(tag_type=candidate)</code> 供人工审核。
+            </p>
+            <button type="button" id="buildRelBtn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
+                为人工作业题目生成知识点关联
+            </button>
+            <p id="buildRelStatus" class="mt-4 text-sm hidden"></p>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-2">题目标签审核</h2>
+            <p class="text-sm text-gray-600 mb-4">
+                AI 自动继承到题目的标签默认是未确认状态（<code class="bg-gray-100 px-1 rounded">is_confirmed=0</code>），请在此确认。
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                <select id="qType" class="px-3 py-2 border border-gray-300 rounded-md">
+                    <option value="single">single</option>
+                    <option value="multiple">multiple</option>
+                    <option value="judge">judge</option>
+                    <option value="essay">essay</option>
+                </select>
+                <input id="qKeyword" type="text" placeholder="题干关键字（可选）" class="px-3 py-2 border border-gray-300 rounded-md">
+                <button type="button" id="loadPendingBtn" class="px-4 py-2 bg-gray-100 rounded-md hover:bg-gray-200">加载未审核题目</button>
+            </div>
+            <div id="tagAuditMsg" class="hidden mb-3 px-3 py-2 rounded text-sm"></div>
+            <input id="qId" type="hidden">
+            <div id="pendingList" class="space-y-2 mb-4"></div>
+            <div id="currentQuestionBanner" class="hidden mb-3 px-3 py-2 rounded border text-sm bg-blue-50 text-blue-700 border-blue-200"></div>
+            <div id="tagList" class="space-y-2 mb-3"></div>
+
+            <hr class="my-6">
+            <h3 class="text-base font-semibold text-gray-800 mb-2">AI 标签推荐与人工补充</h3>
+            <div class="flex flex-wrap gap-2 mb-3">
+                <button type="button" id="aiSuggestBtn" class="px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">AI 推荐标签</button>
+                <input id="manualTagNames" type="text" placeholder="手工添加单个标签，如：组织建设" class="flex-1 min-w-[220px] px-3 py-2 border border-gray-300 rounded-md">
+                <button type="button" id="saveManualTagsBtn" class="px-3 py-2 bg-gray-800 text-white rounded-md hover:bg-black">添加并保存标签</button>
+            </div>
+            <div class="flex flex-wrap gap-2 mb-3">
+                <input id="tagSearchKeyword" type="text" placeholder="搜索已存在可用标签关键字" class="flex-1 min-w-[220px] px-3 py-2 border border-gray-300 rounded-md">
+                <button type="button" id="searchTagsBtn" class="px-3 py-2 bg-gray-100 rounded-md hover:bg-gray-200">搜索标签</button>
+            </div>
+            <div id="tagSearchList" class="space-y-2 mb-3"></div>
+            <div id="suggestTagList" class="space-y-2"></div>
+            <div class="flex gap-2 mt-3">
+                <button type="button" id="confirmBtn" class="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700">确认选中关联</button>
+                <button type="button" id="unconfirmBtn" class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700">取消选中确认</button>
+            </div>
+
+            <hr class="my-6">
+            <h3 class="text-base font-semibold text-gray-800 mb-2">题目内容编辑（一步审核生效）</h3>
+            <div class="space-y-3">
+                <textarea id="editQuestionText" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="题干"></textarea>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <input id="editOptionA" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="选项A（单/多选）">
+                    <input id="editOptionB" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="选项B（单/多选）">
+                    <input id="editOptionC" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="选项C（单/多选）">
+                    <input id="editOptionD" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="选项D（单/多选）">
+                    <input id="editOptionE" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="选项E（多选可选）">
+                    <input id="editCorrectAnswer" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="正确答案（如 A 或 A,B 或 1/0）">
+                </div>
+                <textarea id="editReferenceAnswer" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="参考答案（简答题）"></textarea>
+                <textarea id="editExplanation" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="解析"></textarea>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <input id="editScore" type="number" min="0" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="分值">
+                    <input id="editOperator" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="审核人/编辑人（如 admin）">
+                    <input id="editRemark" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="备注">
+                </div>
+                <button type="button" id="saveQuestionBtn" class="px-4 py-2 bg-emerald-700 text-white rounded-md hover:bg-emerald-800">审核提交通过</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/v1';
+        const tagListEl = document.getElementById('tagList');
+        const tagAuditMsg = document.getElementById('tagAuditMsg');
+        const pendingListEl = document.getElementById('pendingList');
+        const currentQuestionBannerEl = document.getElementById('currentQuestionBanner');
+        const suggestTagListEl = document.getElementById('suggestTagList');
+        const tagSearchListEl = document.getElementById('tagSearchList');
+        const aiSuggestBtn = document.getElementById('aiSuggestBtn');
+        const searchTagsBtn = document.getElementById('searchTagsBtn');
+        const saveManualTagsBtn = document.getElementById('saveManualTagsBtn');
+
+        function debugPerfLog(location, message, data, hypothesisId = 'H0') {
+            // #region agent log
+            fetch('http://127.0.0.1:7480/ingest/f6d85069-68f7-41b5-af08-81428990ce7b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'abf3c5'},body:JSON.stringify({sessionId:'abf3c5',runId:'ai_tag_perf',hypothesisId,location,message,data,timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
+        }
+
+        const state = {
+            currentQuestionId: 0,
+            existingTags: [],
+            pendingTagNames: new Set(),
+            aiSuggestedTags: [],
+            aiCandidateTags: [],
+            loading: {
+                aiSuggest: false,
+                searchTags: false,
+                saveManual: false,
+            },
+        };
+
+        function normalizeTagName(name) {
+            return String(name || '').trim().replace(/\s+/g, ' ');
+        }
+
+        function setAuditMsg(text, type='info') {
+            tagAuditMsg.classList.remove('hidden');
+            tagAuditMsg.textContent = text;
+            tagAuditMsg.className = 'mb-3 px-3 py-2 rounded text-sm ' + (
+                type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' :
+                type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                'bg-blue-50 text-blue-700 border border-blue-200'
+            );
+        }
+
+        function getCurrentQTypeAndId() {
+            const qType = document.getElementById('qType').value;
+            const qId = Number(document.getElementById('qId').value);
+            return { qType, qId };
+        }
+
+        function renderCurrentBanner() {
+            if (!state.currentQuestionId) {
+                currentQuestionBannerEl.classList.add('hidden');
+                currentQuestionBannerEl.textContent = '';
+                return;
+            }
+            currentQuestionBannerEl.classList.remove('hidden');
+            currentQuestionBannerEl.textContent = `当前审核题目 ID: ${state.currentQuestionId}`;
+        }
+
+        function addPendingTagName(name) {
+            const normalized = normalizeTagName(name);
+            if (!normalized) return;
+            const existing = state.existingTags.find(t => normalizeTagName(t.tag_name).toLowerCase() === normalized.toLowerCase());
+            if (existing) return;
+            state.pendingTagNames.add(normalized);
+            renderSuggestTags();
+        }
+
+        function setBtnLoading(btn, loadingText, isLoading) {
+            if (!btn) return;
+            if (!btn.dataset.originText) btn.dataset.originText = btn.textContent;
+            btn.disabled = !!isLoading;
+            btn.textContent = isLoading ? loadingText : btn.dataset.originText;
+        }
+
+        function addExistingTagToPool(tag) {
+            const tagId = Number(tag.id);
+            const existing = state.existingTags.find(t => Number(t.id) === tagId);
+            if (existing) {
+                existing.selected = true;
+                existing.tag_name = tag.tag_name || existing.tag_name;
+                existing.tag_type = tag.tag_type || existing.tag_type;
+                renderTagList();
+                return false;
+            }
+            state.existingTags.push({
+                id: tagId,
+                tag_name: tag.tag_name || '',
+                tag_type: tag.tag_type || '',
+                tag_is_enabled: Number(tag.is_enabled ?? tag.tag_is_enabled ?? 1),
+                is_confirmed: Number(tag.is_confirmed ?? 0),
+                selected: true,
+            });
+            renderTagList();
+            return true;
+        }
+
+        function renderTagList() {
+            tagListEl.innerHTML = '';
+
+            for (const t of state.existingTags) {
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between gap-3 border rounded px-3 py-2';
+                row.innerHTML = `
+                    <label class="flex items-center gap-2 text-sm text-gray-800">
+                        <input type="checkbox" class="tag-check" ${t.selected ? 'checked' : ''} data-tag-id="${t.id}">
+                        <span>${t.tag_name} <span class="text-gray-500">(${t.tag_type || '未分类'})</span></span>
+                    </label>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs ${t.is_confirmed === 1 ? 'text-emerald-700' : 'text-amber-700'}">
+                            ${t.is_confirmed === 1 ? '已确认' : '待确认'} / ${t.tag_is_enabled === 1 ? '标签可用' : '标签待启用'}
+                        </span>
+                        <button type="button" class="remove-existing-tag text-xs px-2 py-1 rounded bg-red-50 text-red-700 border border-red-200" data-tag-id="${t.id}">移除</button>
+                    </div>
+                `;
+                tagListEl.appendChild(row);
+            }
+
+            if (!state.existingTags.length) {
+                tagListEl.innerHTML = '<div class="text-sm text-gray-500">当前无已关联标签，可在下方 AI/搜索/手工添加后提交。</div>';
+            }
+        }
+
+        async function loadPendingQuestions() {
+            const qType = document.getElementById('qType').value;
+            const keyword = document.getElementById('qKeyword').value.trim();
+            const url = `${API_BASE}/questions/audit/pending?question_type=${encodeURIComponent(qType)}&limit=50` + (keyword ? `&keyword=${encodeURIComponent(keyword)}` : '');
+            const r = await fetch(url);
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) {
+                setAuditMsg(data.detail || '加载未审核题目失败', 'error');
+                return;
+            }
+            const items = data.items || [];
+            pendingListEl.innerHTML = '';
+            if (!items.length) {
+                pendingListEl.innerHTML = '<div class="text-sm text-gray-500 border rounded px-3 py-2">当前题型暂无未审核题目。</div>';
+                return;
+            }
+            for (const item of items) {
+                const row = document.createElement('div');
+                row.className = 'border rounded p-3';
+                row.innerHTML = `
+                    <div class="flex items-center justify-between gap-3">
+                        <div class="text-sm text-gray-800">
+                            <div class="font-medium">#${item.id} ${item.question_text_summary || ''}</div>
+                            <div class="text-xs text-gray-500 mt-1">
+                                review_status=${item.review_status}，
+                                待确认标签=${item.unconfirmed_tag_count || 0}，
+                                已确认标签=${item.confirmed_tag_count || 0}，
+                                audit_status=${item.audit_status || 'pending'}
+                            </div>
+                        </div>
+                        <button type="button" class="audit-one-btn px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:bg-blue-700" data-id="${item.id}">
+                            审核
+                        </button>
+                    </div>
+                `;
+                pendingListEl.appendChild(row);
+            }
+            setAuditMsg(`已加载 ${items.length} 道未审核题目`, 'success');
+        }
+
+        async function loadQuestionTags() {
+            const { qType, qId } = getCurrentQTypeAndId();
+            if (!qId || qId <= 0) {
+                setAuditMsg('请先在未审核列表中选择题目', 'error');
+                return;
+            }
+            const r = await fetch(`${API_BASE}/questions/${qType}/${qId}/tags`);
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) {
+                setAuditMsg(data.detail || '加载题目标签失败', 'error');
+                return;
+            }
+            state.existingTags = (data.tags || []).map(t => ({ ...t, selected: true }));
+            renderTagList();
+        }
+
+        async function loadQuestionDetail() {
+            const { qType, qId } = getCurrentQTypeAndId();
+            if (!qId || qId <= 0) return;
+            const r = await fetch(`${API_BASE}/questions/${qType}/${qId}`);
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) {
+                setAuditMsg(data.detail || '加载题目详情失败', 'error');
+                return;
+            }
+            document.getElementById('editQuestionText').value = data.question_text || '';
+            document.getElementById('editExplanation').value = data.explanation || '';
+            document.getElementById('editScore').value = data.score ?? '';
+            document.getElementById('editCorrectAnswer').value = data.correct_answer ?? '';
+            document.getElementById('editReferenceAnswer').value = data.reference_answer || '';
+            document.getElementById('editOptionA').value = data.options?.A || '';
+            document.getElementById('editOptionB').value = data.options?.B || '';
+            document.getElementById('editOptionC').value = data.options?.C || '';
+            document.getElementById('editOptionD').value = data.options?.D || '';
+            document.getElementById('editOptionE').value = data.options?.E || '';
+        }
+
+        function collectSelectedTagIds() {
+            const idSet = new Set();
+            for (const t of state.existingTags) {
+                if (t.selected) idSet.add(Number(t.id));
+            }
+            return [...idSet];
+        }
+
+        async function updateConfirm(confirmed) {
+            const { qType, qId } = getCurrentQTypeAndId();
+            const ids = collectSelectedTagIds();
+            if (!qId || qId <= 0) {
+                setAuditMsg('请先在未审核列表中选择题目', 'error');
+                return;
+            }
+            if (!ids.length) {
+                setAuditMsg('请先勾选要处理的标签', 'error');
+                return;
+            }
+            const r = await fetch(`${API_BASE}/questions/${qType}/${qId}/tags/confirm`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tag_ids: ids, confirmed }),
+            });
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) {
+                setAuditMsg(data.detail || '更新失败', 'error');
+                return;
+            }
+            setAuditMsg(`已更新 ${data.updated ?? 0} 条关联`, 'success');
+            await loadQuestionTags();
+        }
+
+        function renderSuggestTags() {
+            const suggested = state.aiSuggestedTags || [];
+            const candidates = state.aiCandidateTags || [];
+            const pending = [...state.pendingTagNames];
+            const sugHtml = suggested.length
+                ? suggested.map(name => `<button type="button" class="add-ai-tag-btn text-xs px-2 py-1 rounded border border-blue-300 text-blue-700 bg-blue-50 mr-2 mb-2" data-tag-name="${name}">+ ${name}</button>`).join('')
+                : '<span class="text-gray-500 text-sm">无</span>';
+            const candHtml = candidates.length
+                ? candidates.map(name => `<button type="button" class="add-ai-tag-btn text-xs px-2 py-1 rounded border border-amber-300 text-amber-700 bg-amber-50 mr-2 mb-2" data-tag-name="${name}">+ ${name}</button>`).join('')
+                : '<span class="text-gray-500 text-sm">无</span>';
+            const pendingHtml = pending.length
+                ? pending.map(name => `<button type="button" class="remove-suggest-tag text-xs px-2 py-1 rounded border border-red-300 text-red-700 bg-red-50 mr-2 mb-2" data-tag-name="${name}">删除 ${name}</button>`).join('')
+                : '<span class="text-gray-500 text-sm">无</span>';
+            suggestTagListEl.innerHTML = `
+                <div class="text-sm text-gray-700 mb-1">推荐标签（点击加入）：</div>
+                <div>${sugHtml}</div>
+                <div class="text-sm text-amber-700 mt-3 mb-1">候选新标签（点击加入）：</div>
+                <div>${candHtml}</div>
+                <div class="text-sm text-emerald-700 mt-3 mb-1">待提交标签池（点击删除）：</div>
+                <div>${pendingHtml}</div>
+            `;
+        }
+
+        async function resolveTagAndAddToPending(tagName, source = 'unknown') {
+            const { qType, qId } = getCurrentQTypeAndId();
+            const normalizedName = normalizeTagName(tagName);
+            if (!qId || qId <= 0) {
+                setAuditMsg('请先在未审核列表中选择题目', 'error');
+                return;
+            }
+            if (!normalizedName) return;
+
+            const r = await fetch(`${API_BASE}/questions/tags/resolve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    question_type: qType,
+                    question_id: qId,
+                    tag_name: normalizedName,
+                    default_tag_type: 'domain',
+                    default_tag_enabled: 1,
+                }),
+            });
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) {
+                setAuditMsg(data.detail || '标签解析失败', 'error');
+                return;
+            }
+            const resolvedName = normalizeTagName((data.tag || {}).tag_name || normalizedName);
+            addPendingTagName(resolvedName);
+            setAuditMsg(
+                data.created
+                    ? `已添加新标签并加入待提交池（来源：${source}）`
+                    : `已复用已有标签并加入待提交池（来源：${source}）`,
+                'success'
+            );
+        }
+
+        async function aiSuggestTags() {
+            if (state.loading.aiSuggest) return;
+            const { qType, qId } = getCurrentQTypeAndId();
+            if (!qId || qId <= 0) {
+                setAuditMsg('请先在未审核列表中选择题目', 'error');
+                return;
+            }
+            state.loading.aiSuggest = true;
+            setBtnLoading(aiSuggestBtn, 'AI 推荐中...', true);
+            const reqStart = Date.now();
+            // #region agent log
+            debugPerfLog('recommend-admin.html:aiSuggestTags:entry', 'ai suggest request start', { qType, qId }, 'H5');
+            // #endregion
+            try {
+                const r = await fetch(`${API_BASE}/questions/${qType}/${qId}/ai-tag-suggest`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ auto_apply: false }),
+                });
+                const data = await r.json().catch(() => ({}));
+                // #region agent log
+                debugPerfLog(
+                    'recommend-admin.html:aiSuggestTags:response',
+                    'ai suggest response received',
+                    { status: r.status, ok: r.ok, elapsed_ms: Date.now() - reqStart, recommended_count: (data.recommended_tags || data.suggested_tags || []).length },
+                    'H5'
+                );
+                // #endregion
+                if (!r.ok) {
+                    setAuditMsg(data.detail || 'AI 推荐失败', 'error');
+                    return;
+                }
+                state.aiSuggestedTags = data.recommended_tags || data.suggested_tags || [];
+                state.aiCandidateTags = data.new_tag_candidates || [];
+                renderSuggestTags();
+                setAuditMsg('AI 标签推荐完成，可点击标签加入本题', 'success');
+            } finally {
+                state.loading.aiSuggest = false;
+                setBtnLoading(aiSuggestBtn, '', false);
+            }
+        }
+
+        async function searchTags() {
+            if (state.loading.searchTags) return;
+            const keyword = document.getElementById('tagSearchKeyword').value.trim();
+            if (!keyword) {
+                setAuditMsg('请输入标签关键字', 'error');
+                return;
+            }
+            state.loading.searchTags = true;
+            setBtnLoading(searchTagsBtn, '搜索中...', true);
+            try {
+                const r = await fetch(`${API_BASE}/tags?keyword=${encodeURIComponent(keyword)}&is_enabled=1&limit=20`);
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) {
+                    setAuditMsg(data.detail || '搜索标签失败', 'error');
+                    return;
+                }
+                const items = data.items || [];
+                tagSearchListEl.innerHTML = '';
+                if (!items.length) {
+                    tagSearchListEl.innerHTML = '<div class="text-sm text-gray-500">无匹配标签</div>';
+                    return;
+                }
+                for (const item of items) {
+                    const row = document.createElement('div');
+                    row.className = 'flex items-center justify-between border rounded px-3 py-2';
+                    row.innerHTML = `
+                        <span class="text-sm text-gray-800">${item.tag_name} <span class="text-gray-500">(${item.tag_type || '未分类'})</span></span>
+                        <button type="button" class="add-existing-search-tag text-xs px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-200"
+                            data-tag-id="${item.id}" data-tag-name="${item.tag_name}" data-tag-type="${item.tag_type || ''}">
+                            加入
+                        </button>
+                    `;
+                    tagSearchListEl.appendChild(row);
+                }
+            } finally {
+                state.loading.searchTags = false;
+                setBtnLoading(searchTagsBtn, '', false);
+            }
+        }
+
+        async function saveManualTags() {
+            if (state.loading.saveManual) return;
+            const { qId } = getCurrentQTypeAndId();
+            if (!qId || qId <= 0) {
+                setAuditMsg('请先在未审核列表中选择题目', 'error');
+                return;
+            }
+            const raw = document.getElementById('manualTagNames').value || '';
+            const tagName = normalizeTagName(raw);
+            if (!tagName) {
+                setAuditMsg('请先输入一个手工标签', 'error');
+                return;
+            }
+            state.loading.saveManual = true;
+            setBtnLoading(saveManualTagsBtn, '保存中...', true);
+            try {
+                await resolveTagAndAddToPending(tagName, '手工添加');
+                document.getElementById('manualTagNames').value = '';
+            } finally {
+                state.loading.saveManual = false;
+                setBtnLoading(saveManualTagsBtn, '', false);
+            }
+        }
+
+        function buildAuditSubmitPayload() {
+            const { qType } = getCurrentQTypeAndId();
+            const payload = {
+                tag_ids: collectSelectedTagIds(),
+                tag_names: [...state.pendingTagNames],
+                default_tag_type: 'domain',
+                default_tag_enabled: 1,
+                question_text: document.getElementById('editQuestionText').value,
+                explanation: document.getElementById('editExplanation').value,
+                score: Number(document.getElementById('editScore').value || 0),
+                operator: document.getElementById('editOperator').value || 'admin',
+                remark: document.getElementById('editRemark').value || '',
+            };
+            if (qType === 'single' || qType === 'multiple') {
+                payload.option_a = document.getElementById('editOptionA').value;
+                payload.option_b = document.getElementById('editOptionB').value;
+                payload.option_c = document.getElementById('editOptionC').value;
+                payload.option_d = document.getElementById('editOptionD').value;
+                if (qType === 'multiple') payload.option_e = document.getElementById('editOptionE').value;
+                payload.correct_answer = document.getElementById('editCorrectAnswer').value;
+            } else if (qType === 'judge') {
+                payload.correct_answer = Number(document.getElementById('editCorrectAnswer').value || 0);
+            } else if (qType === 'essay') {
+                payload.reference_answer = document.getElementById('editReferenceAnswer').value;
+            }
+            return payload;
+        }
+
+        async function saveQuestion() {
+            const { qType, qId } = getCurrentQTypeAndId();
+            if (!qId || qId <= 0) {
+                setAuditMsg('请先在未审核列表中选择题目', 'error');
+                return;
+            }
+            const payload = buildAuditSubmitPayload();
+            if (!payload.tag_ids.length && !payload.tag_names.length) {
+                setAuditMsg('请至少保留或添加一个标签后再提交', 'error');
+                return;
+            }
+            const r = await fetch(`${API_BASE}/questions/${qType}/${qId}/audit-submit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) {
+                setAuditMsg(data.detail || '审核提交失败', 'error');
+                return;
+            }
+            setAuditMsg('审核提交通过：标签已确认，题目已通过', 'success');
+            state.currentQuestionId = 0;
+            state.existingTags = [];
+            state.pendingTagNames = new Set();
+            state.aiSuggestedTags = [];
+            state.aiCandidateTags = [];
+            document.getElementById('qId').value = '';
+            renderCurrentBanner();
+            renderTagList();
+            renderSuggestTags();
+            tagSearchListEl.innerHTML = '';
+            await loadPendingQuestions();
+        }
+
+        async function openQuestionAudit(questionId) {
+            state.currentQuestionId = Number(questionId);
+            document.getElementById('qId').value = String(questionId);
+            state.pendingTagNames = new Set();
+            state.aiSuggestedTags = [];
+            state.aiCandidateTags = [];
+            renderCurrentBanner();
+            await loadQuestionDetail();
+            await loadQuestionTags();
+            renderSuggestTags();
+            setAuditMsg('已加载题目，请手动点击“AI 推荐标签”触发推荐', 'info');
+        }
+
+        document.getElementById('buildRelBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('buildRelBtn');
+            const status = document.getElementById('buildRelStatus');
+            btn.disabled = true;
+            status.classList.remove('hidden');
+            status.textContent = '执行中…';
+            status.className = 'mt-4 text-sm text-gray-600';
+            try {
+                const r = await fetch(`${API_BASE}/recommendations/build-manual-knowledge-rel`, { method: 'POST' });
+                const data = await r.json();
+                status.classList.remove('hidden');
+                if (!r.ok) {
+                    status.textContent = '失败: ' + (data.detail || r.statusText);
+                    status.className = 'mt-4 text-sm text-red-600';
+                } else {
+                    status.innerHTML = `
+                        <span class="text-green-600">执行完成。</span><br>
+                        处理题目数: ${data.processed_questions ?? 0}，
+                        新增知识点: ${data.created_knowledge_points ?? 0}，
+                        新增关联: ${data.created_rels ?? 0}，
+                        已存在跳过: ${data.skipped_already ?? 0}，
+                        候选标签: ${data.candidate_tags_count ?? 0}
+                    `;
+                }
+            } catch (e) {
+                status.textContent = '请求失败: ' + e.message;
+                status.className = 'mt-4 text-sm text-red-600';
+            }
+            btn.disabled = false;
+        });
+
+        pendingListEl.addEventListener('click', async (e) => {
+            const btn = e.target.closest('.audit-one-btn');
+            if (!btn) return;
+            await openQuestionAudit(Number(btn.dataset.id));
+        });
+
+        tagListEl.addEventListener('change', (e) => {
+            const chk = e.target.closest('.tag-check');
+            if (!chk) return;
+            const tagId = Number(chk.dataset.tagId);
+            state.existingTags = state.existingTags.map(t => t.id === tagId ? { ...t, selected: chk.checked } : t);
+        });
+
+        tagListEl.addEventListener('click', (e) => {
+            const removeExisting = e.target.closest('.remove-existing-tag');
+            if (removeExisting) {
+                const tagId = Number(removeExisting.dataset.tagId);
+                state.existingTags = state.existingTags.filter(t => t.id !== tagId);
+                renderTagList();
+                return;
+            }
+            const removePending = e.target.closest('.remove-pending-tag');
+            if (removePending) {
+                const name = normalizeTagName(removePending.dataset.tagName || '');
+                state.pendingTagNames.delete(name);
+                renderSuggestTags();
+            }
+        });
+
+        suggestTagListEl.addEventListener('click', (e) => {
+            const btn = e.target.closest('.add-ai-tag-btn');
+            if (!btn) return;
+            resolveTagAndAddToPending(btn.dataset.tagName || '', 'AI推荐');
+        });
+        suggestTagListEl.addEventListener('click', (e) => {
+            const removeBtn = e.target.closest('.remove-suggest-tag');
+            if (!removeBtn) return;
+            const name = normalizeTagName(removeBtn.dataset.tagName || '');
+            state.pendingTagNames.delete(name);
+            renderSuggestTags();
+            setAuditMsg('已从待提交标签池移除，不会为当前题目建立该标签关联', 'info');
+        });
+
+        tagSearchListEl.addEventListener('click', (e) => {
+            const btn = e.target.closest('.add-existing-search-tag');
+            if (!btn) return;
+            resolveTagAndAddToPending(btn.dataset.tagName || '', '标签搜索');
+        });
+
+        document.getElementById('loadPendingBtn').addEventListener('click', loadPendingQuestions);
+        document.getElementById('qType').addEventListener('change', async () => {
+            document.getElementById('qId').value = '';
+            state.currentQuestionId = 0;
+            state.existingTags = [];
+            state.pendingTagNames = new Set();
+            state.aiSuggestedTags = [];
+            state.aiCandidateTags = [];
+            renderCurrentBanner();
+            renderTagList();
+            renderSuggestTags();
+            tagSearchListEl.innerHTML = '';
+            await loadPendingQuestions();
+        });
+        document.getElementById('confirmBtn').addEventListener('click', () => updateConfirm(1));
+        document.getElementById('unconfirmBtn').addEventListener('click', () => updateConfirm(0));
+        document.getElementById('aiSuggestBtn').addEventListener('click', aiSuggestTags);
+        document.getElementById('searchTagsBtn').addEventListener('click', searchTags);
+        document.getElementById('saveManualTagsBtn').addEventListener('click', saveManualTags);
+        document.getElementById('saveQuestionBtn').addEventListener('click', saveQuestion);
+
+        renderSuggestTags();
+        loadPendingQuestions().catch(() => {});
+    </script>
+</body>
+</html>

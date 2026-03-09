@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 知识处理服务</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
+    <!-- 顶部导航 -->
+    <nav class="bg-white/80 backdrop-blur border-b">
+        <div class="max-w-6xl mx-auto px-4 py-3">
+            <div class="flex items-center justify-between">
+                <h1 class="text-xl font-semibold text-gray-800">AI 知识处理服务</h1>
+                <div class="space-x-4 text-sm">
+                    <a href="/static/index.html" class="text-blue-600 font-medium">首页</a>
+                    <a href="/static/upload.html" class="text-gray-700 hover:text-blue-600">上传文档</a>
+                    <a href="/static/list.html" class="text-gray-700 hover:text-blue-600">文档列表</a>
+                    <a href="/static/generate.html" class="text-gray-700 hover:text-blue-600">AI 出题</a>
+                    <a href="/static/practice.html" class="text-gray-700 hover:text-blue-600">模拟答题</a>
+                    <a href="/static/recommend-admin.html" class="text-gray-700 hover:text-blue-600">推荐管理</a>
+                    <a href="/static/tags.html" class="text-gray-700 hover:text-blue-600">标签管理</a>
+                    <a href="/docs" class="text-gray-700 hover:text-blue-600">API 文档</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-4xl mx-auto px-4 py-10 flex items-center justify-center">
+        <div class="bg-white rounded-2xl shadow-2xl p-12 text-center w-full">
+            <!-- Logo / 标题 -->
+            <div class="mb-8">
+                <h1 class="text-5xl font-bold text-gray-800 mb-4">📚 AI 知识处理服务</h1>
+                <p class="text-lg text-gray-600">考试平台文档上传、解析、知识点抽取与 RAG 知识库同步</p>
+            </div>
+
+            <!-- 功能入口 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <a href="/static/upload.html" class="group block p-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
+                    <div class="text-white">
+                        <div class="text-5xl mb-4">📤</div>
+                        <h2 class="text-2xl font-bold mb-2">上传文档</h2>
+                        <p class="text-blue-100">上传 PDF、Word、TXT 文档并提交元数据</p>
+                    </div>
+                </a>
+
+                <a href="/static/list.html" class="group block p-8 bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
+                    <div class="text-white">
+                        <div class="text-5xl mb-4">📋</div>
+                        <h2 class="text-2xl font-bold mb-2">文档列表</h2>
+                        <p class="text-purple-100">查看已上传文档和解析状态</p>
+                    </div>
+                </a>
+
+                <a href="/static/practice.html" class="group block p-8 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
+                    <div class="text-white">
+                        <div class="text-5xl mb-4">✏️</div>
+                        <h2 class="text-2xl font-bold mb-2">模拟答题</h2>
+                        <p class="text-emerald-100">答错后触发「推荐练习更多」</p>
+                    </div>
+                </a>
+
+                <a href="/static/recommend-admin.html" class="group block p-8 bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
+                    <div class="text-white">
+                        <div class="text-5xl mb-4">⚙️</div>
+                        <h2 class="text-2xl font-bold mb-2">推荐管理</h2>
+                        <p class="text-amber-100">为人工作业题目生成知识点关联</p>
+                    </div>
+                </a>
+
+                <a href="/static/tags.html" class="group block p-8 bg-gradient-to-br from-slate-700 to-slate-900 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
+                    <div class="text-white">
+                        <div class="text-5xl mb-4">🏷️</div>
+                        <h2 class="text-2xl font-bold mb-2">标签管理</h2>
+                        <p class="text-slate-200">维护预设标签（多类多簇）</p>
+                    </div>
+                </a>
+            </div>
+
+            <!-- API 文档链接 -->
+            <div class="pt-6 border-t">
+                <a href="/docs" class="inline-flex items-center text-blue-600 hover:text-blue-700 font-medium">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    API 文档 (Swagger UI)
+                </a>
+            </div>
+
+            <!-- 系统状态 -->
+            <div class="mt-8 pt-6 border-t">
+                <div id="statusContainer" class="flex items-center justify-center space-x-6 text-sm">
+                    <div class="flex items-center">
+                        <span class="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
+                        <span class="text-gray-600">服务运行中</span>
+                    </div>
+                    <div id="dbStatus" class="flex items-center">
+                        <span class="w-2 h-2 bg-gray-400 rounded-full mr-2"></span>
+                        <span class="text-gray-600">数据库: 检测中...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 版本信息 -->
+        <div class="text-center mt-6 text-gray-600 text-sm">
+            <p id="versionInfo">Knowledge Service v1.0.0</p>
+        </div>
+    </div>
+
+    <script>
+        // 检查服务状态
+        async function checkHealth() {
+            try {
+                const response = await fetch('/health');
+                const data = await response.json();
+                
+                if (data.status === 'ok') {
+                    document.getElementById('dbStatus').innerHTML = `
+                        <span class="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+                        <span class="text-gray-600">数据库: 正常</span>
+                    `;
+                    document.getElementById('versionInfo').textContent = `${data.service} v${data.version}`;
+                }
+            } catch (error) {
+                document.getElementById('dbStatus').innerHTML = `
+                    <span class="w-2 h-2 bg-red-500 rounded-full mr-2"></span>
+                    <span class="text-gray-600">数据库: 连接失败</span>
+                `;
+            }
+        }
+
+        // 页面加载时检查状态
+        window.addEventListener('DOMContentLoaded', checkHealth);
+    </script>
+</body>
+</html>

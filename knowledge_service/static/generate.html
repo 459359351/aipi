@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 出题 - 知识处理服务</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+    <div class="min-h-screen">
+        <!-- 顶部导航 -->
+        <nav class="bg-white shadow-sm border-b">
+            <div class="max-w-7xl mx-auto px-4 py-4">
+                <div class="flex items-center justify-between">
+                    <h1 class="text-2xl font-bold text-gray-800">AI 知识处理服务</h1>
+                    <div class="space-x-4 text-sm">
+                        <a href="/static/index.html" class="text-gray-600 hover:text-blue-600">首页</a>
+                        <a href="/static/upload.html" class="text-gray-600 hover:text-blue-600">上传文档</a>
+                        <a href="/static/list.html" class="text-gray-600 hover:text-blue-600">文档列表</a>
+                        <a href="/static/generate.html" class="text-blue-600 font-medium">AI 出题</a>
+                        <a href="/static/practice.html" class="text-gray-600 hover:text-blue-600">模拟答题</a>
+                        <a href="/static/recommend-admin.html" class="text-gray-600 hover:text-blue-600">推荐管理</a>
+                        <a href="/static/tags.html" class="text-gray-600 hover:text-blue-600">标签管理</a>
+                        <a href="/docs" class="text-gray-600 hover:text-blue-600">API 文档</a>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <div class="max-w-6xl mx-auto px-4 py-8">
+            <!-- 出题配置区 -->
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">AI 出题配置</h2>
+
+                <!-- 文档选择 -->
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">选择文档（可多选）</label>
+                    <select id="documentSelect" multiple onchange="onDocumentChange()" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                        <option value="">-- 请选择已解析完成的文档 --</option>
+                    </select>
+                    <p id="kpCount" class="mt-1 text-sm text-gray-500"></p>
+                </div>
+
+                <!-- 题型数量配置 -->
+                <p class="text-sm text-gray-500 mb-3">单选、多选、判断题：填具体数量则按该数量出题；<strong>填 0 或不填</strong>表示按「知识点数量」出题（有多少个知识点就出多少道）。简答题为题目道数，可综合多个知识点成一道题。</p>
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">单选题数量</label>
+                        <input type="number" id="singleCount" value="0" min="0" max="50" placeholder="0=按知识点数" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">多选题数量</label>
+                        <input type="number" id="multipleCount" value="0" min="0" max="50" placeholder="0=按知识点数" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">多选选项数</label>
+                        <select id="multipleOptions" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                            <option value="4">4 个选项</option>
+                            <option value="5">5 个选项</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">判断题数量</label>
+                        <input type="number" id="judgeCount" value="0" min="0" max="50" placeholder="0=按知识点数" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">简答题数量</label>
+                        <input type="number" id="essayCount" value="2" min="0" max="20" class="w-full px-3 py-2 border border-gray-300 rounded-md" title="简答题可综合多个知识点成一道题">
+                        <p class="mt-0.5 text-xs text-gray-400">可综合多知识点成一道题</p>
+                    </div>
+                </div>
+
+                <button id="generateBtn" onclick="startGenerate()" class="w-full px-4 py-3 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                    开始出题
+                </button>
+            </div>
+
+            <!-- 任务状态区 -->
+            <div id="taskStatusSection" class="bg-white rounded-lg shadow-md p-6 mb-6 hidden">
+                <h3 class="text-lg font-bold text-gray-800 mb-3">出题任务状态</h3>
+                <div id="taskStatusContent" class="space-y-2">
+                </div>
+            </div>
+
+            <!-- 出题结果区 -->
+            <div id="resultSection" class="hidden">
+                <!-- Tab 切换 -->
+                <div class="bg-white rounded-lg shadow-md overflow-hidden">
+                    <div class="border-b flex">
+                        <button onclick="switchTab('single')" id="tabSingle" class="tab-btn px-6 py-3 text-sm font-medium border-b-2 border-blue-600 text-blue-600">
+                            单选题 (<span id="countSingle">0</span>)
+                        </button>
+                        <button onclick="switchTab('multiple')" id="tabMultiple" class="tab-btn px-6 py-3 text-sm font-medium text-gray-500 hover:text-gray-700">
+                            多选题 (<span id="countMultiple">0</span>)
+                        </button>
+                        <button onclick="switchTab('judge')" id="tabJudge" class="tab-btn px-6 py-3 text-sm font-medium text-gray-500 hover:text-gray-700">
+                            判断题 (<span id="countJudge">0</span>)
+                        </button>
+                        <button onclick="switchTab('essay')" id="tabEssay" class="tab-btn px-6 py-3 text-sm font-medium text-gray-500 hover:text-gray-700">
+                            简答题 (<span id="countEssay">0</span>)
+                        </button>
+                    </div>
+
+                    <div class="p-6">
+                        <div id="panelSingle"></div>
+                        <div id="panelMultiple" class="hidden"></div>
+                        <div id="panelJudge" class="hidden"></div>
+                        <div id="panelEssay" class="hidden"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 历史任务列表 -->
+            <div class="bg-white rounded-lg shadow-md p-6 mt-6">
+                <h3 class="text-lg font-bold text-gray-800 mb-3">历史出题任务</h3>
+                <div id="taskHistory" class="text-sm text-gray-500">加载中...</div>
+            </div>
+        </div>
+    </div>
+
+<script>
+const API_BASE = '/api/v1';
+let currentTaskId = null;
+let pollTimer = null;
+
+async function loadDocuments() {
+    try {
+        const res = await fetch(`${API_BASE}/documents?limit=200&status=completed`);
+        const data = await res.json();
+        const select = document.getElementById('documentSelect');
+        select.innerHTML = '<option value="">-- 请选择已解析完成的文档 --</option>';
+        (data.items || []).forEach(doc => {
+            const opt = document.createElement('option');
+            opt.value = doc.id;
+            opt.textContent = `[ID:${doc.id}] ${doc.doc_name}`;
+            select.appendChild(opt);
+        });
+    } catch (e) {
+        console.error('加载文档列表失败:', e);
+    }
+}
+
+async function onDocumentChange() {
+    const kpEl = document.getElementById('kpCount');
+    const select = document.getElementById('documentSelect');
+    const selected = Array.from(select.selectedOptions).filter(opt => opt.value);
+
+    if (selected.length === 0) {
+        kpEl.textContent = '';
+        return;
+    }
+
+    // 多选时仅提示选中数量，不再逐个请求知识点数量
+    if (selected.length > 1) {
+        kpEl.textContent = `已选择 ${selected.length} 个文档，将分别基于各自知识点生成题目`;
+        return;
+    }
+
+    const docId = selected[0].value;
+    try {
+        const res = await fetch(`${API_BASE}/knowledge-points/by-document/${docId}`);
+        if (res.ok) {
+            const data = await res.json();
+            const count = data.total || (data.items ? data.items.length : 0);
+            kpEl.textContent = `该文档已解析 ${count} 个知识点`;
+        } else {
+            kpEl.textContent = '无法获取知识点数量';
+        }
+    } catch (e) {
+        kpEl.textContent = '';
+    }
+}
+
+async function startGenerate() {
+    const select = document.getElementById('documentSelect');
+    const selected = Array.from(select.selectedOptions).filter(opt => opt.value);
+    if (selected.length === 0) {
+        alert('请至少选择一个文档');
+        return;
+    }
+
+    const docIds = selected.map(opt => parseInt(opt.value));
+
+    const baseConfig = {
+        single_choice_count: parseInt(document.getElementById('singleCount').value) || 0,
+        multiple_choice_count: parseInt(document.getElementById('multipleCount').value) || 0,
+        multiple_choice_options: parseInt(document.getElementById('multipleOptions').value) || 4,
+        judge_count: parseInt(document.getElementById('judgeCount').value) || 0,
+        essay_count: parseInt(document.getElementById('essayCount').value) || 0,
+    };
+
+    // 单选/多选/判断为 0 时后端按知识点数出题，无需在此拦截
+
+    const btn = document.getElementById('generateBtn');
+    btn.disabled = true;
+    btn.textContent = '提交中...';
+
+    const createdTasks = [];
+    const failedDocs = [];
+
+    for (const docId of docIds) {
+        const body = {
+            document_id: docId,
+            ...baseConfig,
+        };
+        try {
+            const res = await fetch(`${API_BASE}/questions/generate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.detail || '请求失败');
+            }
+            createdTasks.push({ docId, taskId: data.task_id, message: data.message });
+        } catch (e) {
+            console.error('出题请求失败:', e);
+            failedDocs.push({ docId, error: e.message });
+        }
+    }
+
+    btn.disabled = false;
+    btn.textContent = '开始出题';
+
+    if (createdTasks.length === 0) {
+        const msg = failedDocs.length
+            ? '出题请求失败：' + failedDocs.map(f => `文档ID ${f.docId}（${f.error}）`).join('；')
+            : '出题请求失败';
+        alert(msg);
+        return;
+    }
+
+    const first = createdTasks[0];
+    currentTaskId = first.taskId;
+    showTaskStatus(
+        'pending',
+        `已为 ${docIds.length} 个文档创建出题任务。当前展示文档 ID ${first.docId} 的任务状态。`
+    );
+    startPolling(first.taskId, first.docId);
+    loadTaskHistory();
+
+    if (failedDocs.length) {
+        alert('部分文档创建出题任务失败：' + failedDocs.map(f => `文档ID ${f.docId}（${f.error}）`).join('；'));
+    }
+}
+
+function showTaskStatus(status, message, summary) {
+    const section = document.getElementById('taskStatusSection');
+    const content = document.getElementById('taskStatusContent');
+    section.classList.remove('hidden');
+
+    const statusMap = {
+        'pending': { label: '等待中', color: 'bg-yellow-100 text-yellow-800' },
+        'generating': { label: '生成中', color: 'bg-blue-100 text-blue-800' },
+        'completed': { label: '已完成', color: 'bg-green-100 text-green-800' },
+        'failed': { label: '失败', color: 'bg-red-100 text-red-800' },
+    };
+    const s = statusMap[status] || { label: status, color: 'bg-gray-100 text-gray-800' };
+
+    let html = `
+        <div class="flex items-center space-x-3">
+            <span class="px-3 py-1 rounded-full text-sm font-medium ${s.color}">${s.label}</span>
+            <span class="text-gray-600">${message || ''}</span>
+        </div>
+    `;
+
+    if (status === 'generating') {
+        html += `
+            <div class="flex items-center mt-2">
+                <div class="inline-block animate-spin rounded-full h-5 w-5 border-2 border-blue-600 border-t-transparent mr-2"></div>
+                <span class="text-sm text-gray-500">正在调用 LLM 生成题目，请耐心等待...</span>
+            </div>
+        `;
+    }
+
+    if (summary) {
+        html += `<div class="mt-2 text-sm text-gray-600">生成结果: ${summary}</div>`;
+    }
+
+    content.innerHTML = html;
+}
+
+function startPolling(taskId, docId) {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+        try {
+            const res = await fetch(`${API_BASE}/questions/tasks/${taskId}`);
+            const task = await res.json();
+
+            let summaryText = '';
+            if (task.result_summary) {
+                try {
+                    const rs = JSON.parse(task.result_summary);
+                    summaryText = `单选 ${rs.single_choice || 0}、多选 ${rs.multiple_choice || 0}、判断 ${rs.judge || 0}、简答 ${rs.essay || 0}`;
+                } catch(e) {}
+            }
+
+            if (task.status === 'completed') {
+                clearInterval(pollTimer);
+                pollTimer = null;
+                showTaskStatus('completed', '题目生成完成！', summaryText);
+                document.getElementById('generateBtn').disabled = false;
+                document.getElementById('generateBtn').textContent = '开始出题';
+                loadQuestions(docId, taskId);
+                loadTaskHistory();
+            } else if (task.status === 'failed') {
+                clearInterval(pollTimer);
+                pollTimer = null;
+                showTaskStatus('failed', task.error_message || '生成失败');
+                document.getElementById('generateBtn').disabled = false;
+                document.getElementById('generateBtn').textContent = '开始出题';
+                loadTaskHistory();
+            } else {
+                showTaskStatus(task.status, '正在生成中...', summaryText);
+            }
+        } catch (e) {
+            console.error('轮询任务状态失败:', e);
+        }
+    }, 3000);
+}
+
+async function loadQuestions(docId, taskId) {
+    try {
+        const url = taskId
+            ? `${API_BASE}/questions/by-task/${taskId}`
+            : `${API_BASE}/questions/by-document/${docId}`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        document.getElementById('resultSection').classList.remove('hidden');
+
+        renderSingleChoices(data.single_choices || []);
+        renderMultipleChoices(data.multiple_choices || []);
+        renderJudges(data.judges || []);
+        renderEssays(data.essays || []);
+
+        document.getElementById('countSingle').textContent = (data.single_choices || []).length;
+        document.getElementById('countMultiple').textContent = (data.multiple_choices || []).length;
+        document.getElementById('countJudge').textContent = (data.judges || []).length;
+        document.getElementById('countEssay').textContent = (data.essays || []).length;
+    } catch (e) {
+        console.error('加载题目失败:', e);
+    }
+}
+
+function renderSingleChoices(items) {
+    const el = document.getElementById('panelSingle');
+    if (items.length === 0) {
+        el.innerHTML = '<p class="text-gray-400">暂无单选题</p>';
+        return;
+    }
+    el.innerHTML = items.map((q, i) => `
+        <div class="mb-4 p-4 border border-gray-200 rounded-lg">
+            <p class="font-medium text-gray-800 mb-2">${i + 1}. ${esc(q.question_text)}</p>
+            <div class="grid grid-cols-2 gap-2 mb-2 text-sm">
+                <div class="${q.correct_answer === 'A' ? 'text-green-700 font-semibold' : 'text-gray-600'}">A. ${esc(q.option_a)}</div>
+                <div class="${q.correct_answer === 'B' ? 'text-green-700 font-semibold' : 'text-gray-600'}">B. ${esc(q.option_b)}</div>
+                <div class="${q.correct_answer === 'C' ? 'text-green-700 font-semibold' : 'text-gray-600'}">C. ${esc(q.option_c)}</div>
+                <div class="${q.correct_answer === 'D' ? 'text-green-700 font-semibold' : 'text-gray-600'}">D. ${esc(q.option_d)}</div>
+            </div>
+            <p class="text-sm text-green-600">正确答案: ${q.correct_answer}</p>
+            ${q.explanation ? `<p class="text-sm text-gray-500 mt-1">解析: ${esc(q.explanation)}</p>` : ''}
+        </div>
+    `).join('');
+}
+
+function renderMultipleChoices(items) {
+    const el = document.getElementById('panelMultiple');
+    if (items.length === 0) {
+        el.innerHTML = '<p class="text-gray-400">暂无多选题</p>';
+        return;
+    }
+    el.innerHTML = items.map((q, i) => {
+        let options = `
+            <div class="${q.correct_answer.includes('A') ? 'text-green-700 font-semibold' : 'text-gray-600'}">A. ${esc(q.option_a)}</div>
+            <div class="${q.correct_answer.includes('B') ? 'text-green-700 font-semibold' : 'text-gray-600'}">B. ${esc(q.option_b)}</div>
+            <div class="${q.correct_answer.includes('C') ? 'text-green-700 font-semibold' : 'text-gray-600'}">C. ${esc(q.option_c)}</div>
+            <div class="${q.correct_answer.includes('D') ? 'text-green-700 font-semibold' : 'text-gray-600'}">D. ${esc(q.option_d)}</div>
+        `;
+        if (q.option_e) {
+            options += `<div class="${q.correct_answer.includes('E') ? 'text-green-700 font-semibold' : 'text-gray-600'}">E. ${esc(q.option_e)}</div>`;
+        }
+        return `
+        <div class="mb-4 p-4 border border-gray-200 rounded-lg">
+            <p class="font-medium text-gray-800 mb-2">${i + 1}. ${esc(q.question_text)}</p>
+            <div class="grid grid-cols-2 gap-2 mb-2 text-sm">${options}</div>
+            <p class="text-sm text-green-600">正确答案: ${q.correct_answer}</p>
+            ${q.explanation ? `<p class="text-sm text-gray-500 mt-1">解析: ${esc(q.explanation)}</p>` : ''}
+        </div>`;
+    }).join('');
+}
+
+function renderJudges(items) {
+    const el = document.getElementById('panelJudge');
+    if (items.length === 0) {
+        el.innerHTML = '<p class="text-gray-400">暂无判断题</p>';
+        return;
+    }
+    el.innerHTML = items.map((q, i) => `
+        <div class="mb-4 p-4 border border-gray-200 rounded-lg">
+            <p class="font-medium text-gray-800 mb-2">${i + 1}. ${esc(q.question_text)}</p>
+            <p class="text-sm ${q.correct_answer === 1 ? 'text-green-600' : 'text-red-600'} font-medium">
+                答案: ${q.correct_answer === 1 ? '正确 ✓' : '错误 ✗'}
+            </p>
+            ${q.explanation ? `<p class="text-sm text-gray-500 mt-1">解析: ${esc(q.explanation)}</p>` : ''}
+        </div>
+    `).join('');
+}
+
+function renderEssays(items) {
+    const el = document.getElementById('panelEssay');
+    if (items.length === 0) {
+        el.innerHTML = '<p class="text-gray-400">暂无简答题</p>';
+        return;
+    }
+    el.innerHTML = items.map((q, i) => {
+        let rulesHtml = '';
+        if (q.scoring_rule) {
+            try {
+                const rules = typeof q.scoring_rule === 'string' ? JSON.parse(q.scoring_rule) : q.scoring_rule;
+                if (Array.isArray(rules)) {
+                    rulesHtml = `
+                        <div class="mt-2">
+                            <p class="text-sm font-medium text-gray-700">得分点:</p>
+                            <ul class="list-disc list-inside text-sm text-gray-600">
+                                ${rules.map(r => `<li>${esc(r.point)} (权重: ${r.weight})</li>`).join('')}
+                            </ul>
+                        </div>
+                    `;
+                }
+            } catch(e) {}
+        }
+        return `
+        <div class="mb-4 p-4 border border-gray-200 rounded-lg">
+            <p class="font-medium text-gray-800 mb-2">${i + 1}. ${esc(q.question_text)}</p>
+            <div class="bg-green-50 p-3 rounded mt-2">
+                <p class="text-sm font-medium text-green-800">参考答案:</p>
+                <p class="text-sm text-green-700 whitespace-pre-wrap">${esc(q.reference_answer)}</p>
+            </div>
+            ${rulesHtml}
+        </div>`;
+    }).join('');
+}
+
+function switchTab(tab) {
+    const tabs = ['single', 'multiple', 'judge', 'essay'];
+    tabs.forEach(t => {
+        document.getElementById('panel' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('hidden', t !== tab);
+        const btn = document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1));
+        if (t === tab) {
+            btn.classList.add('border-b-2', 'border-blue-600', 'text-blue-600');
+            btn.classList.remove('text-gray-500');
+        } else {
+            btn.classList.remove('border-b-2', 'border-blue-600', 'text-blue-600');
+            btn.classList.add('text-gray-500');
+        }
+    });
+}
+
+async function loadTaskHistory() {
+    const el = document.getElementById('taskHistory');
+    try {
+        const res = await fetch(`${API_BASE}/questions/tasks?limit=20`);
+        const data = await res.json();
+        const items = data.items || [];
+        if (items.length === 0) {
+            el.innerHTML = '<p class="text-gray-400">暂无历史任务</p>';
+            return;
+        }
+        el.innerHTML = `
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-gray-500 border-b">
+                        <th class="py-2 pr-4">任务ID</th>
+                        <th class="py-2 pr-4">文档ID</th>
+                        <th class="py-2 pr-4">状态</th>
+                        <th class="py-2 pr-4">配置</th>
+                        <th class="py-2 pr-4">结果</th>
+                        <th class="py-2">创建时间</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${items.map(t => {
+                        const statusColors = {
+                            'pending': 'bg-yellow-100 text-yellow-800',
+                            'generating': 'bg-blue-100 text-blue-800',
+                            'completed': 'bg-green-100 text-green-800',
+                            'failed': 'bg-red-100 text-red-800',
+                        };
+                        const sc = statusColors[t.status] || 'bg-gray-100 text-gray-800';
+                        let configText = '-';
+                        if (t.config) {
+                            try {
+                                const c = JSON.parse(t.config);
+                                configText = `单${c.single_choice_count||0}/多${c.multiple_choice_count||0}/判${c.judge_count||0}/简${c.essay_count||0}`;
+                            } catch(e) {}
+                        }
+                        let resultText = '-';
+                        if (t.result_summary) {
+                            try {
+                                const r = JSON.parse(t.result_summary);
+                                resultText = `单${r.single_choice||0}/多${r.multiple_choice||0}/判${r.judge||0}/简${r.essay||0}`;
+                            } catch(e) {}
+                        }
+                        return `
+                        <tr class="border-b hover:bg-gray-50 cursor-pointer" onclick="viewTaskQuestions(${t.document_id}, ${t.id})">
+                            <td class="py-2 pr-4">${t.id}</td>
+                            <td class="py-2 pr-4">${t.document_id}</td>
+                            <td class="py-2 pr-4"><span class="px-2 py-0.5 rounded text-xs font-medium ${sc}">${t.status}</span></td>
+                            <td class="py-2 pr-4">${configText}</td>
+                            <td class="py-2 pr-4">${resultText}</td>
+                            <td class="py-2">${t.created_at ? new Date(t.created_at).toLocaleString('zh-CN') : '-'}</td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (e) {
+        el.innerHTML = '<p class="text-red-500">加载历史任务失败</p>';
+    }
+}
+
+function viewTaskQuestions(docId, taskId) {
+    loadQuestions(docId, taskId || null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function esc(s) {
+    if (!s) return '';
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+}
+
+// 页面加载
+loadDocuments();
+loadTaskHistory();
+</script>
+</body>
+</html>

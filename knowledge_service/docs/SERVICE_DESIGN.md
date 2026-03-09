@@ -1,0 +1,1633 @@
+# 考试平台 AI 知识处理服务 — 设计文档
+
+> 版本：v1.0  
+> 最后更新：2026-03-09  
+> 状态：已实现
+
+---
+
+## 目录
+
+- [1. 概述](#1-概述)
+- [2. 文档与知识点管道](#2-文档与知识点管道)
+- [3. 数据模型](#3-数据模型)
+- [4. API 设计](#4-api-设计)
+- [5. AI 出题功能](#5-ai-出题功能)
+- [6. 项目结构](#6-项目结构)
+- [7. 部署与运维](#7-部署与运维)
+- [8. 题目推荐与审核优化](#8-题目推荐与审核优化)
+
+---
+
+## 1. 概述
+
+### 1.1 服务定位
+
+本服务是企业内部考试平台的 AI 知识处理后端，面向党建领域。用户上传党建相关的规章制度、红头文件、学习材料等文档后，系统自动完成：
+
+1. **文档信息与元数据落库** — 文档名称、类型、领域、版本、文件信息、状态等元数据写入 **MySQL**（documents 表）
+2. **实体文件存储** — 上传的 PDF/Word/TXT 等原始文件存入 **MinIO** 对象存储，便于后续下载解析
+3. **文档解析** — 从 MinIO 拉取文件，按格式（PDF / Word / TXT）提取纯文本
+4. **知识点抽取** — 调用大语言模型（LLM）将文本拆解为结构化知识点
+5. **知识点落库** — 抽取结果（标题、内容、摘要、标签、重要度等）写入 **MySQL**（knowledge_points、tags、knowledge_tag_rel 表）
+6. **RAG 知识库同步** — 将知识点同步写入 **Dify** 知识库，供检索增强生成使用
+7. **AI 自动出题** — 基于已落库的知识点，生成单选题、多选题、判断题、简答题，写入 MySQL 正式题库表（tb_*，并将 `is_ai_generated` 标记为 1）
+8. **题目推荐练习** — 基于文档或错题，优先使用**标签（question_tag_rel）**，不足时使用知识点关联（question_knowledge_rel）与文档信息，推荐相似或相关题目，用于针对性练习
+
+### 1.2 技术栈
+
+
+| 组件      | 技术                                    |
+| ------- | ------------------------------------- |
+| Web 框架  | FastAPI（Python 3.10+）                 |
+| ORM     | SQLAlchemy 2.0                        |
+| 数据库     | MySQL 8.0                             |
+| 对象存储    | MinIO                                 |
+| 大语言模型   | 阿里云 DashScope（Qwen 系列，如 qwen3.5-plus） |
+| RAG 知识库 | Dify Dataset API                      |
+| 异步处理    | FastAPI BackgroundTasks               |
+| JSON 容错 | json-repair 库                         |
+| 前端调试页   | 原生 HTML + Tailwind CSS + JavaScript   |
+
+
+### 1.3 服务架构
+
+
+| 服务             | 作用                   | 是否必须     |
+| -------------- | -------------------- | -------- |
+| **FastAPI 后端** | 提供 API + 前端静态页面      | 必须       |
+| **MySQL**      | 存储文档元数据、知识点、标签、题目、任务 | 必须       |
+| **MinIO**      | 对象存储，存放上传的原始文件       | 上传文档时必须  |
+| **Dify**       | RAG 知识库，同步知识点        | 可选       |
+| **DashScope**  | LLM 服务，用于知识点抽取与题目生成  | 解析/出题时必须 |
+
+
+前端调试页已集成在 FastAPI 中，通过 `/static/*.html` 访问，无需单独启动。
+
+### 1.4 前置依赖
+
+- Python 3.10+
+- MySQL 8.0+
+- MinIO（对象存储服务）
+- Dify（RAG 知识库平台，可选）
+- 阿里云 DashScope API Key（用于 Qwen LLM）
+
+---
+
+## 2. 文档与知识点管道
+
+### 2.1 上传与存储流程
+
+```mermaid
+sequenceDiagram
+    participant U as 用户/前端
+    participant API as FastAPI
+    participant DB as MySQL
+    participant OSS as MinIO
+    participant BG as BackgroundTask
+    participant Dify as Dify 知识库
+
+    U->>API: POST /api/v1/documents/upload<br/>(file + 元数据表单)
+    API->>API: 读取文件，计算 SHA256
+    API->>DB: 创建 Document 记录 (status=pending)
+    API->>OSS: 上传文件到 MinIO
+    API->>DB: 更新 file_url
+    API->>BG: 入队 process_document_task
+    API-->>U: 返回 document_id, status=pending
+
+    Note over BG,Dify: 后台任务异步执行
+    BG->>OSS: 下载文件
+    BG->>DB: 解析后写入知识点
+    BG->>Dify: 逐条同步知识点到知识库
+    BG->>DB: 更新状态 completed
+```
+
+**上传接口接收的元数据字段**：
+
+
+| 字段              | 类型     | 必填  | 说明                  |
+| --------------- | ------ | --- | ------------------- |
+| file            | File   | 是   | 上传的文件（PDF/Word/TXT） |
+| doc_name        | string | 是   | 文档名称                |
+| doc_type        | string | 否   | 文档类型                |
+| business_domain | string | 否   | 业务领域                |
+| org_dimension   | string | 否   | 组织维度                |
+| version         | string | 否   | 版本号                 |
+| effective_date  | string | 否   | 生效日期（YYYY-MM-DD）    |
+| security_level  | string | 否   | 安全等级，默认 internal    |
+| upload_user     | string | 否   | 上传用户标识              |
+
+
+**MinIO 存储规则**：对象键格式为 `{年}/{月}/{uuid}_{原始文件名}`，如 `2026/02/a1b2c3d4_党建考核办法.pdf`。
+
+### 2.2 后台解析与同步流程
+
+文档上传后，后台任务 `process_document_task` 异步执行以下 7 个步骤：
+
+```mermaid
+flowchart TD
+    A["Step 1: 更新状态为 parsing"] --> B["Step 2: 从 MinIO 下载文件"]
+    B --> C["Step 3: 解析文档文本"]
+    C --> D["Step 4: 调用 LLM 抽取知识点"]
+    D --> E["Step 5: 写入 MySQL"]
+    E --> F["Step 6: 逐条同步到 Dify 知识库"]
+    F --> G["Step 7: 更新状态为 completed"]
+    D -->|文本为空或LLM异常| X["更新状态为 failed + error_message"]
+    F -->|Dify 同步失败| G
+```
+
+
+
+
+| 步骤     | 说明                                          |
+| ------ | ------------------------------------------- |
+| Step 1 | 将文档状态从 pending 更新为 parsing                  |
+| Step 2 | 从 MinIO 下载原始文件二进制数据                         |
+| Step 3 | 根据文件格式（pdf/docx/txt）调用对应解析器提取纯文本            |
+| Step 4 | 将文本发送给 LLM，获取结构化知识点 JSON 数组                 |
+| Step 5 | 将知识点、标签、关联关系批量写入 MySQL                      |
+| Step 6 | 逐条将知识点写入 Dify 知识库，记录 dify_document_id 和同步状态 |
+| Step 7 | 标记文档状态为 completed，清空历史 error_message        |
+
+
+**文档解析器**支持三种格式：
+
+
+| 格式   | 解析库         | 说明                                     |
+| ---- | ----------- | -------------------------------------- |
+| PDF  | PyPDF2      | 逐页提取文本，每 10 页打印进度日志                    |
+| DOCX | python-docx | 提取段落文本和表格内容（表格按行拼接）                    |
+| TXT  | 内置          | 自动检测编码（UTF-8 → GBK → GB2312 → Latin-1） |
+
+
+**失败处理**：任意步骤异常时，文档状态更新为 `failed`，异常信息写入 `error_message`。用户可通过「重新解析」功能重试。
+
+### 2.3 知识点抽取设计
+
+#### 2.3.1 LLM 调用约定
+
+
+| 项目    | 说明                                              |
+| ----- | ----------------------------------------------- |
+| 模型    | 由 `.env` 中 `LLM_MODEL` 配置，如 `qwen3.5-plus`      |
+| API   | DashScope `MultiModalConversation.call()`       |
+| 系统角色  | "企业党建领域的知识抽取专家"                                 |
+| 输出约束  | 仅输出 JSON 数组，不输出解释性文字                            |
+| 长文档分段 | 超过 10000 字符的文档自动按段落边界切分为多段，逐段调用 LLM，最后合并去重（已实现） |
+
+
+**长文档分段抽取机制**：
+
+超长文档不再简单截断，而是采用**分段处理**策略，确保全文内容均参与知识点抽取：
+
+
+| 参数                    | 默认值   | 说明                |
+| --------------------- | ----- | ----------------- |
+| `CHUNK_MAX_CHARS`     | 10000 | 每段最大字符数           |
+| `CHUNK_OVERLAP_CHARS` | 500   | 相邻段重叠字符数，避免段落边界割裂 |
+
+
+**处理流程**：
+
+1. **短文档**（≤ 10000 字符）：直接作为单段送入 LLM，行为与之前一致
+2. **长文档**（> 10000 字符）：
+  - 按双换行（`\n\n`）拆分为自然段落
+  - 逐段累积，当累积长度即将超过上限时切出一段，并保留末尾 500 字符作为下一段的开头重叠
+  - 若单个段落本身超长（极端情况），按字符硬切分
+3. **逐段调用 LLM**：每段独立调用 DashScope 抽取知识点，日志中标注段号（如 `[段 2/5]`）
+4. **合并去重**：多段结果按 `title` 去重，同名知识点保留 `importance_score` 更高的那条
+5. **容错**：个别段抽取失败不影响其他段，失败段号会记录在日志中并跳过
+
+#### 2.3.2 抽取原则
+
+1. **可出题性** — 每个知识点应能作为考试题目的素材来源，包含明确的、可考核的信息
+2. **独立完整** — 每个知识点是一个独立、自包含的知识单元，脱离上下文也能理解
+3. **忠于原文** — content 字段忠实反映原文表述，不自行发挥
+
+#### 2.3.3 粒度控制
+
+知识点粒度以「一道完整考题所需的信息量」为标准：
+
+**应当合并的情况**：
+
+- 同一条款中的并列子项（如加分项上限、减分项上限应合并为「评分规则」）
+- 同一制度的多个构成要素（如「三会一课」的四个组成部分）
+- 同一流程的连续步骤（如入党程序的申请→培养→考察→审批）
+- 同一主题的正反面规定
+
+**应当拆分的情况**：
+
+- 不同主题或不同制度的内容
+- 同一章节中相互独立、可分别出题的条款
+- 内容超过 300 字且涵盖多个可独立考核主题的段落
+
+#### 2.3.4 输出字段
+
+
+| 字段               | 说明                                                    |
+| ---------------- | ----------------------------------------------------- |
+| title            | 知识点标题，15 字以内                                          |
+| content          | 详细内容，50~300 字，保留关键数字/日期/名称/流程/条件；ASCII 双引号须改用中文直角引号「」 |
+| summary          | 一句话摘要                                                 |
+| importance_score | 出题价值评分 0.0~~1.0（0.8+ 核心必知，0.5~~0.7 一般规定，0.4 以下背景描述）   |
+| tags             | 标签列表，涵盖：主题词、文件/章节、分类（组织建设/纪律处分等）、知识类型（定义/流程/数字等）      |
+
+
+#### 2.3.5 JSON 容错机制
+
+LLM 输出的 JSON 可能存在格式问题（未转义引号、多余逗号等），采用两级容错：
+
+```
+LLM 原始输出
+    |
+    +-- 1. 提取 JSON 片段（匹配 ```json...``` 代码块或 [...] 数组）
+    |
+    +-- 2. json.loads() 标准解析
+    |      +-- 成功 -> 返回结果
+    |      +-- 失败 |
+    |               v
+    +-- 3. json_repair.repair_json() 容错修复
+           +-- 成功 -> 返回修复后的结果
+           +-- 失败 -> 抛出 ValueError
+```
+
+容错修复后，每条知识点还需通过 Pydantic 模型校验，校验失败的条目会被跳过并记录警告日志。
+
+#### 2.3.6 日志要点
+
+后台任务在关键节点输出详细日志：
+
+
+| 节点       | 日志内容                           |
+| -------- | ------------------------------ |
+| 任务开始/结束  | document_id、格式、总耗时             |
+| MinIO 下载 | 文件大小、耗时                        |
+| 文档解析     | 文本长度、耗时                        |
+| LLM 调用   | 模型名称、输入长度、响应耗时、状态码、响应长度        |
+| JSON 解析  | 标准解析成功/失败、容错修复结果               |
+| MySQL 写入 | 每条知识点的 id/title/tags 数量、批量提交结果 |
+| Dify 同步  | 逐条进度（成功/失败计数）、总耗时              |
+| 任务失败     | 错误详情（含 traceback）              |
+
+
+### 2.4 文档管理
+
+#### 2.4.1 文档列表
+
+`GET /api/v1/documents` — 分页获取文档列表，支持按状态筛选。
+
+#### 2.4.2 文档详情
+
+`GET /api/v1/documents/{document_id}` — 查询单个文档的完整元数据与状态。
+
+#### 2.4.3 更新元数据
+
+`PUT /api/v1/documents/{document_id}` — 更新文档的描述性元数据（不涉及文件替换）。
+
+可更新字段白名单：`doc_name`、`doc_type`、`business_domain`、`org_dimension`、`version`、`effective_date`、`security_level`。
+
+#### 2.4.4 删除文档
+
+`DELETE /api/v1/documents/{document_id}` — 级联删除文档及所有关联数据。
+
+删除顺序：
+
+```mermaid
+flowchart LR
+    A["Step 1: 删除 Dify 知识库文档"] --> B["Step 2: 删除 MinIO 文件"]
+    B --> C["Step 3: 删除 MySQL 记录"]
+```
+
+
+
+MySQL 级联删除范围：`knowledge_tag_rel`（标签关联）→ `knowledge_points`（知识点）→ `documents`（文档本体）。
+
+**约束**：正在解析中（status=parsing）的文档不允许删除，返回 409。
+
+#### 2.4.5 重新解析
+
+`POST /api/v1/documents/{document_id}/reparse` — 先清理旧数据，再触发新的解析任务。
+
+流程：
+
+1. 校验文档存在且不处于 parsing 状态
+2. 清理该文档下所有旧知识点（MySQL 中的 `knowledge_tag_rel` + `knowledge_points`）
+3. 逐条删除 Dify 中对应的文档
+4. 重置文档状态为 pending，清空 error_message
+5. 触发新的后台解析任务
+
+---
+
+## 3. 数据模型
+
+### 3.1 文档与知识点相关表
+
+#### 3.1.1 documents（文档元数据表）
+
+
+| 字段              | 类型           | 约束                                    | 说明                                        |
+| --------------- | ------------ | ------------------------------------- | ----------------------------------------- |
+| id              | BIGINT       | PK, AUTO_INCREMENT                    | 主键                                        |
+| doc_name        | VARCHAR(255) | NOT NULL                              | 文档名称                                      |
+| doc_type        | VARCHAR(50)  | NULL                                  | 文档类型                                      |
+| business_domain | VARCHAR(128) | NULL                                  | 业务领域                                      |
+| org_dimension   | VARCHAR(128) | NULL                                  | 组织维度                                      |
+| version         | VARCHAR(50)  | NULL                                  | 文档版本号                                     |
+| effective_date  | DATE         | NULL                                  | 生效日期                                      |
+| file_url        | VARCHAR(512) | NULL                                  | MinIO 文件访问 URL                            |
+| file_hash       | VARCHAR(128) | NULL, INDEX                           | 文件 SHA256 哈希                              |
+| file_size       | BIGINT       | NULL                                  | 文件大小（字节）                                  |
+| file_format     | VARCHAR(32)  | NULL                                  | 文件格式（pdf/docx/txt）                        |
+| status          | VARCHAR(32)  | NOT NULL, INDEX, DEFAULT 'pending'    | 状态：pending / parsing / completed / failed |
+| error_message   | TEXT         | NULL                                  | 解析失败时的错误信息                                |
+| security_level  | VARCHAR(32)  | NULL, DEFAULT 'internal'              | 安全等级                                      |
+| upload_user     | VARCHAR(128) | NULL                                  | 上传用户标识                                    |
+| upload_time     | DATETIME     | NULL                                  | 上传时间                                      |
+| created_at      | DATETIME     | NOT NULL, DEFAULT CURRENT_TIMESTAMP   | 创建时间                                      |
+| updated_at      | DATETIME     | NOT NULL, ON UPDATE CURRENT_TIMESTAMP | 更新时间                                      |
+
+
+**状态流转**：
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: 上传/重新解析
+    pending --> parsing: 后台任务开始
+    parsing --> completed: 解析成功
+    parsing --> failed: 解析异常
+    failed --> pending: 重新解析
+    completed --> pending: 重新解析
+```
+
+
+
+#### 3.1.2 knowledge_points（知识点表）
+
+
+| 字段               | 类型           | 约束                                  | 说明                                  |
+| ---------------- | ------------ | ----------------------------------- | ----------------------------------- |
+| id               | BIGINT       | PK, AUTO_INCREMENT                  | 主键                                  |
+| document_id      | BIGINT       | NOT NULL, FK(documents.id), INDEX   | 关联文档 ID，级联删除                        |
+| title            | VARCHAR(255) | NOT NULL                            | 知识点标题                               |
+| content          | TEXT         | NOT NULL                            | 知识点详细内容                             |
+| summary          | TEXT         | NULL                                | 知识点摘要                               |
+| importance_score | FLOAT        | NULL, DEFAULT 0.0                   | 重要度评分（0.0~1.0）                      |
+| dify_document_id | VARCHAR(128) | NULL                                | Dify 知识库中的文档 ID                     |
+| dify_sync_status | VARCHAR(32)  | NULL, DEFAULT 'pending'             | Dify 同步状态：pending / synced / failed |
+| created_at       | DATETIME     | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 创建时间                                |
+
+
+#### 3.1.3 tags（标签字典表）
+
+
+| 字段       | 类型           | 约束                 | 说明   |
+| -------- | ------------ | ------------------ | ---- |
+| id       | BIGINT       | PK, AUTO_INCREMENT | 主键   |
+| tag_name | VARCHAR(128) | NOT NULL, UNIQUE   | 标签名称 |
+| tag_type | VARCHAR(64)  | NULL               | 标签分类 |
+
+
+标签采用「获取或创建」策略：写入知识点/题目时，若标签已存在则复用，否则新建。
+
+**tag_type 建议枚举（多类多簇）**：
+
+- `domain`：业务/主题（如：组织建设、党风廉政建设等）
+- `chapter`：来源章节/条款（如：总则、第三条等）
+- `knowledge_type`：知识类型（如：定义、流程、数字、时间节点、职责权限、禁止事项等）
+- `difficulty`：难度（可选：基础/进阶）
+- `candidate`：候选（待审核）。当 LLM 发现预设标签不足时，会把新增建议写入 `new_tags`，服务侧会将其入库为 `tags(tag_type=candidate)` 供人工审核后再调整分类。
+
+#### 3.1.4 knowledge_tag_rel（知识点-标签关联表）
+
+
+| 字段           | 类型     | 约束                          | 说明          |
+| ------------ | ------ | --------------------------- | ----------- |
+| knowledge_id | BIGINT | PK, FK(knowledge_points.id) | 知识点 ID，级联删除 |
+| tag_id       | BIGINT | PK, FK(tags.id)             | 标签 ID，级联删除  |
+
+
+### 3.2 题型表与出题任务表
+
+#### 3.2.1 已有题型表扩展
+
+四张已有题型表均新增两个追溯列，用于关联题目来源：
+
+
+| 列名          | 类型     | 约束          | 说明      |
+| ----------- | ------ | ----------- | ------- |
+| document_id | BIGINT | NULL, INDEX | 来源文档 ID |
+| task_id     | BIGINT | NULL, INDEX | 出题任务 ID |
+
+
+> 设为 NULL 是因为已有存量数据没有这两个字段值。
+
+**tb_single_choices（单选题，正式题库表）**
+
+
+| 字段                      | 类型                            | 说明                        |
+| ----------------------- | ----------------------------- | ------------------------- |
+| id                      | INT, PK, AUTO_INCREMENT       | 主键                        |
+| document_id             | BIGINT, NULL, INDEX           | 来源文档 ID（解析文档）            |
+| task_id                 | BIGINT, NULL, INDEX           | 出题任务 ID（question_tasks.id） |
+| question_text           | TEXT, NOT NULL                | 题目内容                      |
+| option_a ~ option_d     | TEXT, NOT NULL                | 选项 A~D                    |
+| correct_answer          | VARCHAR(1), NOT NULL          | 正确答案：A/B/C/D              |
+| explanation             | TEXT, NULL                    | 答案解析                      |
+| score                   | INT, NOT NULL, DEFAULT 10     | 题目分值                      |
+| review_status           | SMALLINT, NOT NULL, DEFAULT 0 | 审核状态：0 待审核 / 1 通过 / 2 不通过 |
+| is_ai_generated         | TINYINT(1), NOT NULL, DEFAULT 0 | 是否为 AI 生题：0 否 / 1 是      |
+| created_at / updated_at | DATETIME                      | 时间戳                       |
+
+
+**tb_multiple_choices（多选题，正式题库表）**
+
+
+| 字段                      | 类型                            | 说明                  |
+| ----------------------- | ----------------------------- | ------------------- |
+| id                      | INT, PK, AUTO_INCREMENT       | 主键                  |
+| document_id             | BIGINT, NULL, INDEX           | 来源文档 ID             |
+| task_id                 | BIGINT, NULL, INDEX           | 出题任务 ID             |
+| question_text           | TEXT, NOT NULL                | 题目内容                |
+| option_a ~ option_d     | TEXT, NOT NULL                | 选项 A~D              |
+| option_e                | TEXT                          | 选项 E（4 选项时为空字符串）    |
+| correct_answer          | VARCHAR(20), NOT NULL         | 正确答案，逗号分隔，如 "A,B,D" |
+| explanation             | TEXT, NULL                    | 答案解析                |
+| score                   | INT, NOT NULL, DEFAULT 10     | 题目分值                |
+| review_status           | SMALLINT, NOT NULL, DEFAULT 0 | 审核状态                |
+| is_ai_generated         | TINYINT(1), NOT NULL, DEFAULT 0 | 是否为 AI 生题：0 否 / 1 是      |
+| created_at / updated_at | DATETIME                      | 时间戳                 |
+
+
+**tb_judges（判断题，正式题库表）**
+
+
+| 字段                      | 类型                            | 说明               |
+| ----------------------- | ----------------------------- | ---------------- |
+| id                      | INT, PK, AUTO_INCREMENT       | 主键               |
+| document_id             | BIGINT, NULL, INDEX           | 来源文档 ID          |
+| task_id                 | BIGINT, NULL, INDEX           | 出题任务 ID          |
+| question_text           | TEXT, NOT NULL                | 题目内容             |
+| correct_answer          | SMALLINT, NOT NULL            | 正确答案：1 正确 / 0 错误 |
+| explanation             | TEXT, NULL                    | 答案解析             |
+| score                   | INT, NOT NULL, DEFAULT 5      | 题目分值             |
+| review_status           | SMALLINT, NOT NULL, DEFAULT 0 | 审核状态             |
+| is_ai_generated         | TINYINT(1), NOT NULL, DEFAULT 0 | 是否为 AI 生题：0 否 / 1 是      |
+| created_at / updated_at | DATETIME                      | 时间戳              |
+
+
+**tb_essays（简答题，正式题库表）**
+
+
+| 字段                      | 类型                            | 说明        |
+| ----------------------- | ----------------------------- | --------- |
+| id                      | INT, PK, AUTO_INCREMENT       | 主键        |
+| document_id             | BIGINT, NULL, INDEX           | 来源文档 ID   |
+| task_id                 | BIGINT, NULL, INDEX           | 出题任务 ID   |
+| question_text           | TEXT, NOT NULL                | 题目内容      |
+| reference_answer        | TEXT, NOT NULL                | 参考答案      |
+| scoring_rule            | TEXT, NULL                    | 评分规则 JSON |
+| score                   | INT, NOT NULL, DEFAULT 20     | 题目分值      |
+| review_status           | SMALLINT, NOT NULL, DEFAULT 0 | 审核状态      |
+| is_ai_generated         | TINYINT(1), NOT NULL, DEFAULT 0 | 是否为 AI 生题：0 否 / 1 是      |
+| created_at / updated_at | DATETIME                      | 时间戳       |
+
+
+**scoring_rule 结构示例**：
+
+```json
+[
+  {"point": "深入构建中建一局155大党建工作格局", "weight": 1},
+  {"point": "学习宣传和贯彻落实党的理论和路线方针政策", "weight": 1},
+  {"point": "做好党员教育、管理、监督、服务和发展党员工作", "weight": 2},
+  {"point": "强化人才队伍建设，培养骨干人才", "weight": 1}
+]
+```
+
+#### 3.2.2 question_tasks（出题任务跟踪表）
+
+
+| 字段             | 类型          | 约束                                    | 说明          |
+| -------------- | ----------- | ------------------------------------- | ----------- |
+| id             | BIGINT      | PK, AUTO_INCREMENT                    | 主键          |
+| document_id    | BIGINT      | NOT NULL, INDEX                       | 关联文档 ID     |
+| status         | VARCHAR(32) | NOT NULL, DEFAULT 'pending'           | 任务状态        |
+| config         | TEXT        | NULL                                  | 题型数量配置 JSON |
+| error_message  | TEXT        | NULL                                  | 失败错误信息      |
+| result_summary | TEXT        | NULL                                  | 生成结果摘要 JSON |
+| created_at     | DATETIME    | NOT NULL, DEFAULT CURRENT_TIMESTAMP   | 创建时间        |
+| updated_at     | DATETIME    | NOT NULL, ON UPDATE CURRENT_TIMESTAMP | 更新时间        |
+
+
+**config 示例**：
+
+```json
+{
+  "single_choice_count": 5,
+  "multiple_choice_count": 5,
+  "multiple_choice_options": 4,
+  "judge_count": 5,
+  "essay_count": 2
+}
+```
+
+**result_summary 示例**：
+
+```json
+{
+  "single_choice": 5,
+  "multiple_choice": 5,
+  "judge": 5,
+  "essay": 2
+}
+```
+
+#### 3.2.3 question_knowledge_rel（题目-知识点关联表）
+
+为支持「按错题推荐」和跨文档补题，新增题目与知识点之间的多对多关联表：
+
+
+| 字段          | 类型           | 约束                                      | 说明                              |
+|-------------|--------------|-----------------------------------------|---------------------------------|
+| id          | BIGINT       | PK, AUTO_INCREMENT                      | 主键                              |
+| question_type | VARCHAR(16) | NOT NULL, INDEX                         | 题型：single / multiple / judge / essay |
+| question_id | INT          | NOT NULL, INDEX                         | 题目 ID（对应 tb_* 表主键）             |
+| knowledge_id | BIGINT      | NOT NULL, FK(knowledge_points.id), INDEX | 关联知识点 ID，随知识点级联删除              |
+| weight      | TINYINT      | NOT NULL, DEFAULT 1                     | 关联权重（1~3，预留给更精细推荐使用）         |
+| created_at  | DATETIME     | NOT NULL, DEFAULT CURRENT_TIMESTAMP     | 创建时间                            |
+
+
+用途：
+
+- 对于 **AI 生题**：出题任务（`process_question_task`）在每种题型 `db.flush()` 取得题目 ID 后，立即依据 LLM 返回的 `source_knowledge_indices` 字段（1 起始整数数组，标识本题依据的知识点序号）写入关联记录，**实时自动建立**，无需任何离线任务；
+- 对于 **人工题**（`document_id` 为空）：通过管理页触发 `POST /api/v1/recommendations/build-manual-knowledge-rel`，服务侧会调用 LLM 结合题干+答案/解析提炼知识点，写入 `knowledge_points` 并建立关联记录，纳入推荐体系统一处理；
+- 在推荐算法中，当标签召回不足时，可通过共享 `knowledge_id` 进一步兜底召回。
+
+#### 3.2.4 question_tag_rel（题目-标签关联表）
+
+为实现「标签驱动推荐」，新增题目与标签之间的多对多关联表：
+
+| 字段          | 类型           | 约束                                      | 说明                              |
+|-------------|--------------|-----------------------------------------|---------------------------------|
+| id          | BIGINT       | PK, AUTO_INCREMENT                      | 主键                              |
+| question_type | VARCHAR(16) | NOT NULL, INDEX                         | 题型：single / multiple / judge / essay |
+| question_id | INT          | NOT NULL, INDEX                         | 题目 ID（对应 tb_* 表主键）             |
+| tag_id      | BIGINT       | NOT NULL, FK(tags.id), INDEX            | 标签 ID（随标签级联删除）                |
+| uk(question_type,question_id,tag_id) | UNIQUE | - | 去重约束 |
+
+写入策略：
+
+- **AI 生题**：在写入 `question_knowledge_rel` 后，同步聚合「引用知识点的 tags」，写入 `question_tag_rel`；
+- **人工题**：在 LLM 提炼知识点并挂载预设标签后，同步写入 `question_tag_rel`；
+- **人工维护题**：可通过 `POST /api/v1/questions/{question_type}/{question_id}/tags` 覆盖设置标签（支持 tag_ids 或 tag_names）。
+
+### 3.3 数据库迁移脚本
+
+
+| 脚本                      | 用途                                                         | 执行时机    |
+| ----------------------- | ---------------------------------------------------------- | ------- |
+| `init_tables.sql`       | 创建 documents、knowledge_points、tags、knowledge_tag_rel 四张表   | 首次部署    |
+| `migrate_questions.sql` | 为历史 ai_tb_* 表添加 document_id/task_id 列及索引；创建 question_tasks 表（旧方案，已不再写入 ai_tb_*） | 仅兼容旧数据时使用 |
+| `migrate_tb_questions.sql` | 为正式题库表 tb_single_choices / tb_multiple_choices / tb_judges / tb_essays 添加 document_id/task_id/review_status/is_ai_generated 列及索引 | 启用 AI 出题写入 tb_* 前 |
+| `migrate_tag_system.sql` | 创建 `question_tag_rel` 并初始化一批党建领域预设标签（domain/knowledge_type/difficulty） | 启用标签驱动推荐前 |
+
+
+> 两个脚本均需使用具有 CREATE / ALTER 权限的 MySQL 账号手动执行，应用层 `aipi_user` 通常无此权限。
+
+---
+
+## 4. API 设计
+
+所有接口挂载在 `/api/v1` 路径下。
+
+### 4.1 文档管理 API
+
+前缀：`/api/v1/documents`
+
+
+| 方法     | 路径                       | 说明        |
+| ------ | ------------------------ | --------- |
+| POST   | `/upload`                | 上传文档并触发解析 |
+| GET    | ``                       | 分页获取文档列表  |
+| GET    | `/{document_id}`         | 查询文档详情    |
+| PUT    | `/{document_id}`         | 更新文档元数据   |
+| DELETE | `/{document_id}`         | 级联删除文档    |
+| POST   | `/{document_id}/reparse` | 重新解析文档    |
+
+
+#### POST /upload — 上传文档
+
+**请求**：`multipart/form-data`，包含 file 和元数据表单字段（见 2.1 节）。
+
+**响应**（200）：
+
+```json
+{
+  "id": 9,
+  "doc_name": "党建考核管理办法",
+  "status": "pending",
+  "message": "文档上传成功，后台解析任务已触发"
+}
+```
+
+**副作用**：创建 Document 记录 → 上传 MinIO → 入队后台解析任务。
+
+#### GET / — 文档列表
+
+**查询参数**：
+
+
+| 参数     | 类型     | 默认值 | 说明           |
+| ------ | ------ | --- | ------------ |
+| skip   | int    | 0   | 偏移量          |
+| limit  | int    | 50  | 每页条数（最大 200） |
+| status | string | 无   | 按状态筛选        |
+
+
+**响应**：
+
+```json
+{
+  "total": 12,
+  "items": [ ... ]
+}
+```
+
+#### PUT /{document_id} — 更新元数据
+
+**请求体**（JSON）：仅包含需要更新的字段。
+
+```json
+{
+  "doc_name": "新名称",
+  "business_domain": "党建管理"
+}
+```
+
+#### DELETE /{document_id} — 删除文档
+
+**响应**：
+
+```json
+{
+  "message": "文档已删除",
+  "detail": {
+    "document_id": 9,
+    "knowledge_points_deleted": 8,
+    "dify_deleted": 7,
+    "dify_failed": 1,
+    "minio_deleted": true
+  }
+}
+```
+
+#### POST /{document_id}/reparse — 重新解析
+
+**响应**：
+
+```json
+{
+  "id": 9,
+  "doc_name": "党建考核管理办法",
+  "status": "pending",
+  "message": "旧知识点已清理（MySQL: 8 条, Dify: 成功 7 / 失败 1），重新解析任务已触发"
+}
+```
+
+### 4.2 知识点 API
+
+前缀：`/api/v1/knowledge-points`
+
+
+| 方法  | 路径                           | 说明           |
+| --- | ---------------------------- | ------------ |
+| GET | `/by-document/{document_id}` | 获取文档关联的知识点列表 |
+| GET | `/{kp_id}`                   | 查询单个知识点详情    |
+
+
+#### GET /by-document/{document_id}
+
+**响应**：
+
+```json
+{
+  "total": 8,
+  "document_id": 9,
+  "items": [
+    {
+      "id": 1,
+      "title": "考核评分规则",
+      "content": "...",
+      "summary": "...",
+      "importance_score": 0.85,
+      "dify_sync_status": "synced",
+      "tags": [
+        {"id": 1, "tag_name": "考核评分", "tag_type": null}
+      ]
+    }
+  ]
+}
+```
+
+### 4.3 出题 API
+
+前缀：`/api/v1/questions`
+
+
+| 方法   | 路径                           | 说明           |
+| ---- | ---------------------------- | ------------ |
+| POST | `/generate`                  | 创建出题任务       |
+| GET  | `/tasks/{task_id}`           | 查询出题任务状态     |
+| GET  | `/tasks`                     | 出题任务列表       |
+| GET  | `/by-document/{document_id}` | 查询文档已生成的所有题目 |
+
+
+#### POST /generate — 创建出题任务
+
+**请求体**（JSON）：
+
+
+| 字段                      | 类型  | 默认值 | 范围   | 说明             |
+| ----------------------- | --- | --- | ---- | -------------- |
+| document_id             | int | 必填  | -    | 文档 ID（必须已解析完成） |
+| single_choice_count     | int | 0   | 0-50 | 单选题数量；**0 表示按知识点数量出题**（有多少个知识点出多少道） |
+| multiple_choice_count   | int | 0   | 0-50 | 多选题数量；**0 表示按知识点数量出题** |
+| multiple_choice_options | int | 4   | 4-5  | 多选题选项数         |
+| judge_count             | int | 0   | 0-50 | 判断题数量；**0 表示按知识点数量出题** |
+| essay_count             | int | 2   | 0-20 | 简答题数量（题目道数；**简答题可综合多个知识点成一道题**） |
+
+
+**校验规则**：
+
+- 文档必须存在且 `status = completed`
+- 文档下必须有已解析的知识点
+- 至少一种题型有效：单选/多选/判断为 0 时按知识点数出题，四种题型有效数量之和 > 0
+
+**响应**（200）：
+
+```json
+{
+  "task_id": 1,
+  "status": "pending",
+  "message": "出题任务已创建，共需生成 17 道题目（基于 8 个知识点）"
+}
+```
+
+#### GET /tasks/{task_id} — 查询任务状态
+
+**响应**：
+
+```json
+{
+  "id": 1,
+  "document_id": 9,
+  "status": "completed",
+  "config": "{\"single_choice_count\": 5, ...}",
+  "result_summary": "{\"single_choice\": 5, \"multiple_choice\": 5, ...}",
+  "error_message": null,
+  "created_at": "2026-02-13T10:00:00",
+  "updated_at": "2026-02-13T10:02:30"
+}
+```
+
+#### GET /tasks — 任务列表
+
+**查询参数**：
+
+
+| 参数          | 类型      | 说明                |
+| ----------- | ------- | ----------------- |
+| document_id | int（可选） | 按文档筛选             |
+| skip        | int     | 偏移量，默认 0          |
+| limit       | int     | 每页数量，默认 50，最大 200 |
+
+
+#### GET /by-document/{document_id} — 查询文档已生成题目
+
+**响应**：按题型分类返回该文档下所有已生成题目。
+
+```json
+{
+  "document_id": 9,
+  "single_choices": [ ... ],
+  "multiple_choices": [ ... ],
+  "judges": [ ... ],
+  "essays": [ ... ]
+}
+```
+
+### 4.4 题目推荐与关联 API
+
+前缀：`/api/v1/recommendations`
+
+
+| 方法   | 路径                               | 说明                     |
+|------|----------------------------------|------------------------|
+| GET  | `/by-document/{document_id}`     | 按文档推荐一组练习题             |
+| GET  | `/by-question`                   | 基于错题推荐更多相关题目          |
+| POST | `/build-manual-knowledge-rel`    | 为人工作业题目批量生成题目-知识点关联 |
+
+
+#### GET /by-document/{document_id} — 按文档推荐练习题
+
+用于「从某篇文档发起练习」的场景，返回该文档及其关联知识点下的题目集合。
+
+- 支持按题型分别配置数量：`single_count` / `multiple_count` / `judge_count` / `essay_count`
+- `include_manual=true` 时，在文档下 AI 生题不足的情况下，可补充与该文档相关的人工题：
+  - **优先**通过 `question_tag_rel` 以标签重叠召回人工题；
+  - **不足**时再通过 `question_knowledge_rel` 以知识点重叠兜底召回；
+- 返回统一结构的题目列表，含字段：
+  - `question_type`：single / multiple / judge / essay
+  - `question_id`：题目 ID（tb_* 主键）
+  - `document_id`：来源文档 ID（如有）
+  - `is_ai_generated`：是否 AI 生题
+  - `question_text`、`options`/`correct_answer` 或 `reference_answer` 等
+  - `recommend_reason`：如「同文档题目」「同知识点关联的人工题」
+
+典型调用方：前端练习页或考试平台，在文档学习页中调用该接口组织一套练习题。
+
+#### GET /by-question — 按错题推荐相关题目
+
+用于「做错某题后，推荐更多相似题目」：
+
+- 请求参数：
+  - `question_type`：single / multiple / judge / essay
+  - `question_id`：错题在 tb_* 表中的主键 ID
+  - `limit`：推荐数量上限，默认 10
+- 推荐策略（概要）：
+  1. 根据 `question_type + question_id` 在 `question_tag_rel` 中查出绑定的 `tag_id` 集合；
+  2. 找出共享标签的其他题目（按共享标签数量降序排序，reason=共享标签）；
+  3. 若仍不足，再使用 `question_knowledge_rel`（共享知识点，reason=共享知识点）兜底；
+  4. 若仍不足且错题 `document_id` 非空，则从同一文档下随机补充题目（排除自身，reason=同文档补充）；
+  5. 结果中每道题附带 `related_score`（共享标签数或共享知识点数）与 `recommend_reason`。
+
+该接口在调试页 `/static/practice.html` 中，用于用户答错后点击「推荐练习更多」时触发。
+
+#### POST /build-manual-knowledge-rel — 为人工作业题生成知识点关联
+
+用于在后台运维场景下，为题库中 **document_id 为空** 的人工作业题目自动建立题目-知识点/标签关联：
+
+- 实现逻辑（服务层 `build_manual_question_knowledge_rel`）大致为：
+  - 遍历四张题型表中 `document_id IS NULL` 的题目；
+  - 将题干 + 选项 + 答案/解析拼装成 `qa_text`，调用 LLM 提炼 1~3 个知识点；
+  - 将新知识点写入 `knowledge_points`（归入系统文档：人工题目知识点），并写入 `question_knowledge_rel`；
+  - 从新知识点的预设标签聚合写入 `question_tag_rel`；
+  - 候选新标签写入 `tags(tag_type=candidate)`，用于人工审核与后续纳入预设标签。
+- 返回统计信息：
+
+```json
+{
+  "processed_questions": 120,
+  "created_knowledge_points": 200,
+  "created_rels": 200,
+  "skipped_already": 40,
+  "manual_kp_document_id": 999,
+  "candidate_tags_count": 12
+}
+```
+
+该接口通过管理页 `/static/recommend-admin.html` 一键触发，用于增强错题推荐对人工题库的覆盖能力。
+
+### 4.5 标签管理 API
+
+前缀：`/api/v1/tags`
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/types` | 获取 `tag_type` 枚举与含义 |
+| GET | `` | 查询标签列表（支持 tag_type/keyword 分页筛选） |
+| GET | `/grouped` | 按 tag_type 分组返回标签（便于前端下拉/簇展示） |
+| POST | `` | 新增标签 |
+| PUT | `/{tag_id}` | 编辑标签 |
+| DELETE | `/{tag_id}` | 删除标签（会级联删除题目/知识点关联） |
+| POST | `/batch` | 批量导入/更新预设标签 |
+
+对应调试页：`/static/tags.html`
+
+### 4.6 系统 API
+
+
+| 方法  | 路径        | 说明              |
+| --- | --------- | --------------- |
+| GET | `/health` | 健康检查            |
+| GET | `/`       | 根路径，返回服务信息和页面链接 |
+
+
+---
+
+## 5. AI 出题功能
+
+### 5.1 支持题型
+
+
+| 题型  | 存储表                 | 默认分值 | 说明                                                         |
+| --- |----------------------| ---- |------------------------------------------------------------|
+| 单选题 | tb_single_choices    | 10   | 4 个选项（A/B/C/D），单一正确答案；AI 生题时 `is_ai_generated=1`         |
+| 多选题 | tb_multiple_choices  | 10   | 4 或 5 个选项（可配），2 个及以上正确答案；AI 生题时 `is_ai_generated=1` |
+| 判断题 | tb_judges            | 5    | 正确（1）或错误（0）；AI 生题时 `is_ai_generated=1`                 |
+| 简答题 | tb_essays            | 20   | 参考答案 + 评分得分点（scoring_rule）；AI 生题时 `is_ai_generated=1`     |
+
+
+### 5.2 出题流程
+
+```mermaid
+sequenceDiagram
+    participant U as 用户/前端
+    participant API as FastAPI
+    participant DB as MySQL
+    participant BG as BackgroundTask
+    participant LLM as DashScope Qwen
+
+    U->>API: POST /api/v1/questions/generate<br/>(document_id, 各题型数量)
+    API->>DB: 校验文档状态和知识点数量
+    API->>DB: 创建 QuestionTask (status=pending)
+    API->>BG: 入队 process_question_task
+    API-->>U: 返回 task_id, status=pending
+
+    BG->>DB: 更新任务 status=generating
+    BG->>DB: 查询 knowledge_points
+    BG->>BG: 拼接知识点上下文文本
+
+    loop 按题型依次生成
+        BG->>LLM: 发送 Prompt（知识点 + 题型要求）
+        LLM-->>BG: 返回 JSON 数组
+        BG->>BG: 解析和容错修复 JSON
+        BG->>DB: 批量写入对应 tb_* 表（is_ai_generated=1）
+    end
+
+    BG->>DB: 更新任务 status=completed, result_summary
+
+    U->>API: GET /api/v1/questions/tasks/{task_id}
+    API->>DB: 查询任务状态
+    API-->>U: 返回 status, result_summary
+
+    U->>API: GET /api/v1/questions/by-document/{document_id}
+    API->>DB: 按题型查询题目
+    API-->>U: 返回分类题目列表
+```
+
+
+
+### 5.3 任务状态机
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: 创建任务
+    pending --> generating: 后台开始处理
+    generating --> completed: 全部题型生成成功
+    generating --> failed: 任意步骤异常
+    failed --> [*]
+    completed --> [*]
+```
+
+
+
+### 5.4 LLM 出题服务设计
+
+#### 5.4.1 调用约定
+
+
+| 项目   | 说明                                        |
+| ---- | ----------------------------------------- |
+| 模型   | 由 `.env` 中 `LLM_MODEL` 配置                 |
+| API  | DashScope `MultiModalConversation.call()` |
+| 系统角色 | "企业党建领域的考试命题专家"                           |
+| 输出约束 | 仅输出 JSON，不输出解释性文字                         |
+| 引号处理 | JSON 字符串值中的 ASCII 双引号须用中文直角引号「」替代         |
+
+
+#### 5.4.2 JSON 容错机制
+
+与知识点抽取共用同一套两级容错策略：`json.loads` → `json_repair.repair_json`。
+
+#### 5.4.3 各题型 Prompt 设计要点
+
+**单选题**：
+
+- 4 个选项（A/B/C/D），唯一正确答案
+- 覆盖知识点中的关键信息（数字、定义、流程、职责、原则等）
+- 干扰选项具有迷惑性但不与正确答案含义相同
+- 附带答案解析
+- 输出字段：`question_text`, `option_a` ~ `option_d`, `correct_answer`, `explanation`, `source_knowledge_indices`
+
+**多选题**：
+
+- 选项数由入参控制（4 或 5 个）
+- 正确答案 >= 2 个，以逗号分隔大写字母表示（如 "A,B,D"）
+- 考查需要综合理解的内容
+- 输出字段：`question_text`, `option_a` ~ `option_d`（+ `option_e`），`correct_answer`, `explanation`, `source_knowledge_indices`
+
+**判断题**：
+
+- 答案为正确（1）或错误（0）
+- 正确与错误题目数量大致均衡
+- 错误题目基于知识点进行合理的细节篡改（修改数字、调换概念、颠倒因果等）
+- 输出字段：`question_text`, `correct_answer`, `explanation`, `source_knowledge_indices`
+
+**简答题**：
+
+- 考查理解、归纳和阐述能力
+- 参考答案完整准确，覆盖所有要点
+- scoring_rule 为得分点数组，每项含 `point`（要点描述）和 `weight`（分值权重）
+- 简答题优先综合多个知识点出题，`source_knowledge_indices` 可含多个序号
+- 输出字段：`question_text`, `reference_answer`, `scoring_rule`, `source_knowledge_indices`
+
+> **`source_knowledge_indices`**：1 起始的整数数组，标识本题主要依据了上下文中第几个知识点（对应 `【知识点N】` 的编号）。单选/判断通常为 1 个序号，多选/简答可包含多个。后台任务将依据此字段直接写入 `question_knowledge_rel` 表，无需二次 LLM 匹配。
+
+#### 5.4.4 写入兼容处理
+
+
+| 场景                         | 处理方式                                   |
+| -------------------------- | -------------------------------------- |
+| 多选题 option_e 为 None        | 若数据库该列为 NOT NULL，写入时将 None 转为空字符串 `""` |
+| 判断题 correct_answer 为布尔值    | 写入前统一转为整数 1/0                          |
+| 简答题 scoring_rule 为 JSON 对象 | 写入前序列化为 JSON 字符串存储                     |
+
+
+### 5.5 后台出题任务设计
+
+#### 5.5.1 执行流程
+
+```mermaid
+flowchart TD
+    A[开始] --> B[更新任务状态为 generating]
+    B --> C[校验文档存在且 status=completed]
+    C --> D[查询 document_id 下所有知识点]
+    D --> E["拼接知识点上下文（_build_knowledge_context）\n构建 kp_index_map {序号→knowledge_id}"]
+    E --> F{single 有效数 > 0?}
+    F -->|是| G[调用 generate_single_choices]
+    G --> H["批量写入 tb_single_choices（is_ai_generated=1）\ndb.flush() 获取 ID"]
+    H --> H2["按 source_knowledge_indices 写入 question_knowledge_rel"]
+    F -->|否| I{multiple 有效数 > 0?}
+    H2 --> I
+    I -->|是| J[调用 generate_multiple_choices]
+    J --> K["批量写入 tb_multiple_choices（is_ai_generated=1）\ndb.flush()"]
+    K --> K2["按 source_knowledge_indices 写入 question_knowledge_rel"]
+    I -->|否| L{judge 有效数 > 0?}
+    K2 --> L
+    L -->|是| M[调用 generate_judges]
+    M --> N["批量写入 tb_judges（is_ai_generated=1）\ndb.flush()"]
+    N --> N2["按 source_knowledge_indices 写入 question_knowledge_rel"]
+    L -->|否| O{essay_count > 0?}
+    N2 --> O
+    O -->|是| P[调用 generate_essays（可综合多知识点）]
+    P --> Q["批量写入 tb_essays（is_ai_generated=1）\ndb.flush()"]
+    Q --> Q2["按 source_knowledge_indices 写入 question_knowledge_rel"]
+    O -->|否| R[commit 事务]
+    Q2 --> R
+    R --> S[更新任务 status=completed + result_summary]
+    S --> T[结束]
+
+    C -->|校验失败| X[rollback + status=failed + error_message]
+    G -->|异常| X
+    J -->|异常| X
+    M -->|异常| X
+    P -->|异常| X
+    X --> T
+```
+
+**数量规则**：单选/多选/判断题的「有效数」= 配置值 > 0 时取配置值，配置 = 0 时取该文档知识点数量（有多少个知识点就出多少道）。简答题数量为题目道数，生成时鼓励一道题综合多个知识点。
+
+**知识关联写入规则**：每种题型在 `db.flush()` 后即可获取题目 ID，随即遍历 LLM 返回的 `source_knowledge_indices`，通过预建的 `kp_index_map`（`{序号: knowledge_id}`）查找对应知识点 ID，写入 `question_knowledge_rel`（`weight=1`）。索引越界或 LLM 未返回此字段时静默跳过，不影响主流程。
+
+
+
+#### 5.5.2 出题时同步写入知识关联（question_knowledge_rel）
+
+AI 出题任务在写入题目后会**同步**将题目与知识点的关联关系写入 `question_knowledge_rel`，核心逻辑如下：
+
+```
+kp_index_map = {1: kps[0].id, 2: kps[1].id, ...}   # 序号→knowledge_id
+
+for item in generated_items:
+    q = XxxQuestion(...)
+    db.add(q)
+    pairs.append((q, item))
+
+db.flush()   # 获取 q.id
+
+for q, item in pairs:
+    for idx in item.get("source_knowledge_indices", []):
+        kp_id = kp_index_map.get(int(idx))
+        if kp_id:
+            db.add(QuestionKnowledgeRel(question_type=..., question_id=q.id, knowledge_id=kp_id))
+```
+
+- `source_knowledge_indices` 由 LLM 在出题 Prompt 中声明后随题目一同返回，内容为本题主要依据的知识点在上下文中的 1-based 序号；
+- 序号越界、字段缺失、类型转换失败时静默跳过，不影响主流程；
+- 单选/判断通常关联 1 个知识点，多选/简答可关联 2~5 个；
+- 在写入知识关联后，会同步聚合「引用知识点的 tags」写入 `question_tag_rel`，为标签驱动推荐提供召回依据；
+- 此步骤天然保证了 AI 生题的知识关联完整性，使后续的「按错题推荐」功能可直接在 `question_knowledge_rel` 上查询，无需二次处理。
+
+#### 5.5.3 知识点上下文构建（_build_knowledge_context）
+
+`_build_knowledge_context(kps)` 将知识点列表拼接为 LLM 可读的文本格式：
+
+```
+【知识点1】标题
+  标签: 标签A, 标签B
+  知识点正文内容...
+
+【知识点2】标题
+  知识点正文内容...
+```
+
+#### 5.5.4 错误处理策略
+
+- 任意步骤异常时执行 `db.rollback()`，已写入的题目全部回滚
+- 更新任务状态为 `failed`，将异常信息写入 `error_message`
+- 已成功生成的题型数量记录在 `result_summary` 中（部分成功场景）
+- 不自动重试，用户可通过前端重新发起出题任务
+
+#### 5.5.5 日志记录
+
+
+| 节点      | 日志内容                         |
+| ------- | ---------------------------- |
+| 任务开始    | task_id、document_id、config   |
+| 知识点加载   | 知识点数量、上下文字符数                 |
+| 每题型生成前  | 题型名称、目标数量                    |
+| 每题型生成后  | 耗时、实际生成数量                    |
+| LLM 调用  | 模型名称、prompt 长度、响应耗时、状态码、响应长度 |
+| JSON 解析 | 标准解析成功/失败、容错修复结果             |
+| 任务完成    | result_summary、总耗时           |
+| 任务失败    | 错误详情（含 traceback）            |
+
+
+### 5.6 前端出题与推荐调试页
+
+- `static/generate.html` — **AI 出题调试页**，通过 `/static/generate.html` 访问；
+- `static/practice.html` — **模拟答题页**，通过 `/static/practice.html` 访问，用于答题与错题推荐；
+- `static/recommend-admin.html` — **推荐管理页**，通过 `/static/recommend-admin.html` 访问，用于为人工题生成知识点关联。
+- `static/tags.html` — **标签管理页**，通过 `/static/tags.html` 访问，用于维护预设标签与查看候选标签（tag_type=candidate）。
+
+`generate.html` 的主要模块：
+
+| 模块   | 说明                                                                          |
+| ---- | --------------------------------------------------------------------------- |
+| 文档选择 | 多选下拉列表，仅展示 status=completed 的文档；单选时显示该文档的知识点数量，多选时提示已选择的文档数量，将为每个文档分别创建出题任务 |
+| 题型配置 | 单选/多选/判断：填数量则按该数量出题，填 0 或不填则按知识点数量出题；简答题为题目道数（可综合多知识点成一道题）；多选题选项数 4/5 |
+| 出题按钮 | 校验配置后，对选中的每个文档依次调用 POST /questions/generate，分别获取 task_id（页面默认展示第一个文档对应任务的状态与题目）       |
+| 任务状态 | 轮询 GET /questions/tasks/{task_id}，实时展示任务进度与状态                                         |
+| 题目展示 | 任务完成后调用 GET /questions/by-document/{document_id}，按题型 Tab 分类展示                         |
+| 历史任务 | 展示最近的出题任务列表，可点击某行按文档维度查看已生成题目                                               |
+
+
+```mermaid
+flowchart LR
+    A[选择一个或多个文档] --> B[配置题型数量]
+    B --> C["点击「开始出题」"]
+    C --> D[显示任务状态区（默认展示第一个文档）]
+    D --> E{轮询任务状态}
+    E -->|generating| E
+    E -->|completed| F[展示生成的题目]
+    E -->|failed| G[展示错误信息]
+```
+
+`practice.html` 用于模拟考试场景中的「答错后推荐练习更多」流程：
+
+- 从 `GET /documents?status=completed` 加载可选文档；
+- 调用 `GET /recommendations/by-document/{document_id}` 获取一题进行答题；
+- 用户提交或点击「模拟答错」后，调用 `GET /recommendations/by-question` 加载与该错题相关的题目列表。
+
+`recommend-admin.html` 用于一键触发 `POST /recommendations/build-manual-knowledge-rel`，为文库中 document_id 为空的人工作业题批量提炼知识点并写入 `question_knowledge_rel` / `question_tag_rel`，提升错题推荐对人工题库的覆盖范围。
+
+---
+
+## 6. 项目结构
+
+```
+knowledge_service/
+├── app/
+│   ├── main.py                      # FastAPI 应用入口，路由注册，生命周期管理
+│   ├── config.py                    # 统一配置管理（pydantic-settings + .env）
+│   ├── database.py                  # SQLAlchemy 引擎 & Session 工厂
+│   ├── models/                      # ORM 模型
+│   │   ├── __init__.py
+│   │   ├── document.py              # documents 表
+│   │   ├── knowledge_point.py       # knowledge_points 表
+│   │   ├── tag.py                   # tags 表
+│   │   ├── knowledge_tag_rel.py     # knowledge_tag_rel 关联表（知识点-标签）
+│   │   ├── question.py              # tb_* 题型表 + question_tasks 表（历史 ai_tb_* 表仍保留以兼容旧系统）
+│   │   └── question_knowledge_rel.py# question_knowledge_rel 题目-知识点关联表
+│   ├── schemas/                     # Pydantic 请求/响应模型
+│   │   ├── document.py              # 文档相关 Schema
+│   │   ├── knowledge_point.py       # 知识点相关 Schema
+│   │   ├── question.py              # 出题相关 Schema
+│   │   └── recommendation.py        # 推荐相关 Schema
+│   ├── api/                         # API 路由
+│   │   ├── documents.py             # 文档管理端点（上传/列表/详情/更新/删除/重新解析）
+│   │   ├── knowledge_points.py      # 知识点查询端点
+│   │   ├── questions.py             # AI 出题端点（生成/任务状态/题目查询）
+│   │   └── recommendations.py       # 题目推荐与题目-知识点关联管理端点
+│   ├── services/                    # 业务服务层
+│   │   ├── document_service.py      # 文档 CRUD、知识点存储、级联删除
+│   │   ├── minio_service.py         # MinIO 文件上传/下载/删除
+│   │   ├── parser_service.py        # 文档解析（PDF/Word/TXT）
+│   │   ├── knowledge_extractor.py   # LLM 知识点抽取（Prompt + JSON 容错）
+│   │   ├── question_generator.py    # LLM 出题服务（四种题型 Prompt + 解析）
+│   │   ├── recommendation_service.py# 题目推荐与人工题-知识点自动关联服务
+│   │   └── dify_service.py          # Dify 知识库 API（创建/删除文档）
+│   └── tasks/                       # 后台异步任务
+│       ├── document_tasks.py        # 文档解析任务（7 步流水线）
+│       └── question_tasks.py        # 出题任务（按题型逐步生成）
+├── static/                          # 前端调试页面
+│   ├── index.html                   # 首页导航
+│   ├── upload.html                  # 文档上传页
+│   ├── list.html                    # 文档列表页
+│   ├── detail.html                  # 文档详情页（含编辑/删除/重新解析）
+│   ├── generate.html                # AI 出题调试页
+│   ├── practice.html                # 模拟答题页（答错后触发推荐练习更多）
+│   └── recommend-admin.html         # 推荐管理页（一键为人工题生成题目-知识点关联）
+├── docs/                            # 设计文档
+│   ├── SERVICE_DESIGN.md            # 服务设计总览（本文档）
+│   └── AI_QUESTION_GENERATION_DESIGN.md  # AI 出题功能详细设计
+├── init_tables.sql                  # 初始建表脚本（documents/knowledge_points/tags/rel）
+├── migrate_questions.sql            # 历史出题功能迁移脚本（ai_tb_* 扩展 + question_tasks）
+├── requirements.txt                 # Python 依赖
+├── .env.example                     # 环境变量模板
+├── start.sh                         # 一键启动脚本
+└── README.md                        # 快速上手指南
+```
+
+---
+
+## 7. 部署与运维
+
+### 7.1 快速开始
+
+#### 安装依赖
+
+```bash
+cd knowledge_service
+pip install -r requirements.txt
+```
+
+#### 配置环境变量
+
+```bash
+cp .env.example .env
+# 编辑 .env 文件，填入实际配置
+```
+
+#### 初始化数据库
+
+使用具有 CREATE 权限的 MySQL 账号执行建表脚本：
+
+```bash
+mysql -u root -p aipi < init_tables.sql
+```
+
+如需启用出题功能，还需执行迁移脚本：
+
+```bash
+mysql -u root -p aipi < migrate_questions.sql
+```
+
+#### 启动服务
+
+```bash
+conda activate aipi
+cd knowledge_service
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+或使用一键启动脚本：
+
+```bash
+./start.sh
+```
+
+启动成功后访问：
+
+
+| 页面     | 地址                                                                                       |
+| ------ | ---------------------------------------------------------------------------------------- |
+| 首页     | [http://localhost:8000/static/index.html](http://localhost:8000/static/index.html)       |
+| 上传页    | [http://localhost:8000/static/upload.html](http://localhost:8000/static/upload.html)     |
+| 文档列表   | [http://localhost:8000/static/list.html](http://localhost:8000/static/list.html)         |
+| AI 出题  | [http://localhost:8000/static/generate.html](http://localhost:8000/static/generate.html) |
+| API 文档 | [http://localhost:8000/docs](http://localhost:8000/docs)                                 |
+
+上述入口均在各页面右上角的导航栏中互相跳转，便于在「首页 / 上传文档 / 文档列表 / AI 出题 / API 文档」之间快速切换。
+
+
+#### 启动 MinIO
+
+**Docker 方式**：
+
+```bash
+docker run -d \
+  --name minio \
+  -p 9000:9000 -p 9001:9001 \
+  -e MINIO_ROOT_USER=minioadmin \
+  -e MINIO_ROOT_PASSWORD=minioadmin \
+  quay.io/minio/minio server /data --console-address ":9001"
+```
+
+**Homebrew 方式（macOS）**：
+
+```bash
+brew install minio/stable/minio
+mkdir -p ~/minio-data
+minio server ~/minio-data --console-address ":9001"
+```
+
+MinIO 控制台：[http://localhost:9001](http://localhost:9001)
+
+> 未启动 MinIO 时 FastAPI 可正常启动，但上传文档会失败。
+
+### 7.2 环境变量汇总
+
+
+| 变量                | 说明               | 默认值                                        |
+| ----------------- | ---------------- | ------------------------------------------ |
+| APP_NAME          | 应用名称             | Knowledge Service                          |
+| APP_VERSION       | 版本号              | 1.0.0                                      |
+| DEBUG             | 调试模式             | false                                      |
+| MYSQL_HOST        | MySQL 主机         | 127.0.0.1                                  |
+| MYSQL_PORT        | MySQL 端口         | 3306                                       |
+| MYSQL_USER        | MySQL 用户名        | root                                       |
+| MYSQL_PASSWORD    | MySQL 密码         | （空）                                        |
+| MYSQL_DATABASE    | MySQL 数据库名       | knowledge_service                          |
+| MINIO_ENDPOINT    | MinIO 端点         | 127.0.0.1:9000                             |
+| MINIO_ACCESS_KEY  | MinIO 访问密钥       | minioadmin                                 |
+| MINIO_SECRET_KEY  | MinIO 秘密密钥       | minioadmin                                 |
+| MINIO_BUCKET      | MinIO 存储桶        | knowledge-docs                             |
+| MINIO_SECURE      | MinIO 是否启用 HTTPS | false                                      |
+| DIFY_BASE_URL     | Dify API 基础 URL  | [http://127.0.0.1/v1](http://127.0.0.1/v1) |
+| DIFY_API_KEY      | Dify API 密钥      | （空）                                        |
+| DIFY_DATASET_ID   | Dify 数据集 ID      | （空）                                        |
+| DASHSCOPE_API_KEY | DashScope API 密钥 | （空）                                        |
+| LLM_MODEL         | LLM 模型名称         | qwen-max                                   |
+
+
+> MySQL 密码中的特殊字符（如 `@`）会自动进行 URL 编码，无需手动转义。
+
+### 7.3 Python 依赖
+
+
+| 包名                           | 用途                 |
+| ---------------------------- | ------------------ |
+| fastapi                      | Web 框架             |
+| uvicorn                      | ASGI 服务器           |
+| python-multipart             | 文件上传支持             |
+| sqlalchemy                   | ORM                |
+| pymysql                      | MySQL 驱动           |
+| pydantic / pydantic-settings | 数据校验与配置管理          |
+| minio                        | MinIO 客户端          |
+| httpx                        | HTTP 客户端（Dify API） |
+| PyPDF2                       | PDF 解析             |
+| python-docx                  | Word 解析            |
+| dashscope                    | DashScope LLM SDK  |
+| json-repair                  | JSON 容错解析          |
+
+
+### 7.4 常见问题
+
+#### 打不开 [http://localhost:8000/static/index.html](http://localhost:8000/static/index.html)
+
+- 确认 FastAPI 是否在运行（终端应看到 `Uvicorn running on http://0.0.0.0:8000`）
+- 检查端口占用：`lsof -i :8000`
+- 尝试 [http://127.0.0.1:8000/static/index.html](http://127.0.0.1:8000/static/index.html)
+
+#### 上传文档失败
+
+- 确认 MinIO 已启动：`curl http://localhost:9000/minio/health/live`
+- 检查 `.env` 中 `MINIO_ENDPOINT` 配置
+
+#### 数据库权限不足
+
+应用层用户（如 `aipi_user`）通常无 CREATE / ALTER 权限。建表和迁移脚本需使用 root 或具有 DDL 权限的账号手动执行。
+
+#### 多选题 option_e 写入报错
+
+若数据库 `tb_multiple_choices.option_e` 列定义为 `NOT NULL`，当 LLM 生成 4 选项多选题时 `option_e` 为 None。系统已在写入时将 None 转为空字符串 `""` 处理。
+
+#### LLM 返回 JSON 解析失败
+
+系统采用两级容错（`json.loads` + `json_repair`）。若仍然失败，检查 LLM 原始输出日志，可能需要调整 Prompt 中的引号规避规则。
+
+---
+
+## 8. 题目推荐与审核优化
+
+### 8.1 一步审核生效
+
+- 新增题目编辑接口：`PUT /api/v1/questions/{question_type}/{question_id}`
+- 支持编辑题干/选项/答案/解析/分值，并默认将 `review_status` 置为通过（一步审核）
+- 每次编辑落审计日志到 `question_audit_logs`
+- 新增审核提交接口：`POST /api/v1/questions/{question_type}/{question_id}/audit-submit`
+  - 一次提交同时完成：题目编辑、标签覆盖写入、标签确认（`is_confirmed=1`）、题目通过（`review_status=1`）
+  - 操作落审计日志，`operation=audit_submit`
+
+### 8.1.1 审核状态模型（业务层收敛，数据层双字段）
+
+- 数据层保持双字段，避免粒度丢失：
+  - 题目级：`tb_* .review_status`（0待审核/1通过/2不通过）
+  - 关联级：`question_tag_rel.is_confirmed`（0待确认/1已确认）
+- 业务层统一展示状态 `audit_status`：
+  - `passed`：`review_status=1` 且该题无未确认标签（`unconfirmed_tag_count=0`）
+  - `pending`：其他情况
+- 该模型保证「题目内容审核」与「标签审核」可独立演进，同时对前端只暴露一个统一审核状态，降低使用复杂度。
+
+```mermaid
+flowchart TD
+    StartAudit[开始审核一题] --> LoadState[读取当前状态]
+    LoadState --> CheckContent{"review_status == 1 ?"}
+    CheckContent -->|否| PendingByContent[audit_status = pending]
+    CheckContent -->|是| CheckTag{"unconfirmed_tag_count == 0 ?"}
+    CheckTag -->|否| PendingByTag[audit_status = pending]
+    CheckTag -->|是| PassedState[audit_status = passed]
+
+    PendingByContent --> EditQuestion[编辑题干/选项/答案/解析]
+    EditQuestion --> SaveDraft[保存编辑]
+    SaveDraft --> CheckTag
+
+    PendingByTag --> ConfirmTag[确认标签关联]
+    ConfirmTag --> CheckTag
+
+    PassedState --> ReEdit[再次编辑题目]
+    ReEdit --> ContentChanged{"内容有实质变更?"}
+    ContentChanged -->|是| ResetPending[review_status 回到待审核]
+    ContentChanged -->|否| KeepPassed[保持 passed]
+    ResetPending --> PendingByContent
+```
+
+```mermaid
+flowchart TD
+    SelectType[选择题型] --> LoadPendingList[加载未审核题目列表]
+    LoadPendingList --> OpenAudit[点击某题进入审核]
+    OpenAudit --> AdjustQuestion[编辑题目与标签]
+    AdjustQuestion --> SubmitAudit[审核提交通过]
+    SubmitAudit --> PassedResult[状态更新为 passed]
+    PassedResult --> RefreshList[刷新列表继续下一题]
+```
+
+### 8.2 人工题 AI 推荐标签闭环
+
+- 新增单题 AI 推荐标签接口：`POST /api/v1/questions/{question_type}/{question_id}/ai-tag-suggest`
+- 新增批量接口：`POST /api/v1/questions/batch/ai-tag-suggest`
+- `ai-tag-suggest` 返回口径升级：
+  - 主字段：`recommended_tags`（直接提炼的推荐标签，去重后最多 5 个）
+  - 兼容字段：`suggested_tags`（短期与 `recommended_tags` 保持一致），`new_tag_candidates=[]`
+- AI 推荐标签与人工自定义标签统一走 `POST /api/v1/questions/tags/resolve` 落库校验链路：
+  - 数据库已存在同名标签：直接复用
+  - 数据库不存在同名标签：即时创建新标签后复用
+  - 两种情况都会进入当前题目的「待提交标签池」
+- 最终审核提交时，题目标签关联写入 `question_tag_rel`，并在提交通过时设为 `is_confirmed=1`
+- 新增未审核题目列表接口：`GET /api/v1/questions/audit/pending`
+  - 按题型返回 `review_status!=1` 的题目，附带 `confirmed_tag_count` / `unconfirmed_tag_count` / `audit_status`
+- 新增单题审核详情接口：`GET /api/v1/questions/{question_type}/{question_id}`
+  - 用于审核页加载题干/选项/答案/解析/分值与统一审核状态
+- 标签新增去重规则升级：
+  - 对标签名做 `trim + 空白归一 + 大小写归一` 后再查重，避免同名重复写入
+
+### 8.3 用户画像与行为重排
+
+- 新增用户画像表：`user_profiles`
+- 新增用户行为表：`user_question_behaviors`
+- 新增画像推荐接口：`GET /api/v1/recommendations/by-profile/{user_id}`
+- 新增行为记录接口：`POST /api/v1/recommendations/behaviors/record`
+- 推荐策略升级为混合模式：
+  - 规则召回：标签 > 知识点 > 文档
+  - 行为重排：历史错误率高、耗时长、未做过优先
+
+### 8.4 新增迁移脚本
+
+- `migrate_recommendation_audit_profile.sql`
+  - 创建 `question_audit_logs`
+  - 创建 `user_profiles`
+  - 创建 `user_question_behaviors`
+
+### 8.5 页面能力增强
+
+- `static/recommend-admin.html`
+  - 题型切换自动加载未审核题目列表（`single/multiple/judge/essay`）
+  - 每行支持进入「逐题审核」：自动加载题目详情与当前标签；AI 推荐改为手动触发（点击 `AI 推荐标签` 按钮）
+  - 标签操作支持：推荐标签增删、按关键字搜索 `tags` 加入、手工新增标签（同名去重）
+  - 审核页采用「三来源统一标签池」：
+    - 来源 A：AI 推荐标签（点击加入）
+    - 来源 B：系统内标签搜索并选择（关键词模糊检索）
+    - 来源 C：手工新增标签（单条输入、单条保存，服务端实时校验同名）
+  - 三来源“点击加入”统一调用 `POST /api/v1/questions/tags/resolve`，保证复用/创建规则一致
+  - 标签池中的每个标签在提交前都可删除；删除仅移除「本题待关联集合」，不物理删除 `tags` 表数据
+  - 交互反馈规范：
+    - AI 推荐按钮支持 loading（推荐中）并防重复提交
+    - 标签搜索按钮支持 loading（搜索中）并防重复提交
+    - 手工保存按钮支持 loading（保存中）并防重复提交
+  - 后端日志规范（无前端日志面板）：
+    - `POST /api/v1/questions/{question_type}/{question_id}/ai-tag-suggest` 记录开始/结束、标签数量与耗时
+    - `GET /api/v1/tags?keyword=...` 记录关键词、返回数量与耗时
+    - `POST /api/v1/questions/tags/resolve` 记录单标签解析结果（是否新建）
+    - `POST /api/v1/questions/{question_type}/{question_id}/audit-submit` 记录提交标签数量、状态更新与耗时
+  - 主操作收敛为「审核提交通过」：一次完成标签确认 + 题目通过
+  - 页面展示统一 `audit_status`，后端仍分别维护 `review_status` 与 `is_confirmed`
+- `static/practice.html`
+  - 新增按画像获取题目入口
+  - 提交作答时记录用户行为，用于后续推荐重排
+
+## 附录 A：设计决策与约束
+
+
+| 决策              | 说明                                                   |
+| --------------- | ---------------------------------------------------- |
+| 复用已有表           | 历史方案：复用平台已有的 ai_tb_* 表，仅增加 document_id、task_id 追溯列；当前实现改为写入 tb_* 正式题库表，并通过 is_ai_generated 标记 AI 生题 |
+| 追溯列可空           | document_id 和 task_id 设为 NULL，兼容存量数据                 |
+| 多选题选项数可配        | 通过请求参数 multiple_choice_options（4 或 5）控制，Prompt 动态拼接  |
+| scoring_rule 存储 | 简答题评分规则以 JSON 字符串形式存入 TEXT 列                         |
+| 异步不重试           | 解析和出题任务为一次性异步执行，失败后不自动重试，用户可手动重新发起                   |
+| JSON 容错         | LLM 输出 JSON 可能格式不规范，采用 json.loads + json_repair 两级容错 |
+| 引号规避            | Prompt 中要求 LLM 用中文直角引号「」替代 ASCII 双引号，降低 JSON 解析错误率   |
+| 手动迁移            | 表结构变更通过 SQL 脚本手动执行，应用层用户通常无 DDL 权限                   |
+| Sentinel 模式     | document_service 中使用 _UNSET 哨兵值区分「未传参」和「显式传 None」    |
+| 级联删除顺序          | 删除文档时按 Dify → MinIO → MySQL 顺序执行，外部服务失败不阻断主流程        |
+| 重新解析先清后建        | 重新解析前先清理旧知识点（MySQL + Dify），再触发新的解析任务                 |
+| Dify 同步失败容忍     | Dify 同步失败仅记录警告日志，不影响文档解析成功状态                         |
+
+
+## 附录 B：Prompt 模板示例（单选题）
+
+```text
+请根据以下党建知识点内容，生成 5 道单选题。
+
+## 要求
+1. 每道题有且仅有 4 个选项（A/B/C/D），只有一个正确答案
+2. 题目应覆盖知识点中的关键信息（数字、定义、流程、职责、原则等）
+3. 干扰选项应具有一定迷惑性，但不能与正确答案含义相同
+4. 答案解析应简明扼要，说明为何选此项
+
+## 输出格式
+严格以 JSON 数组返回，每个元素包含以下字段：
+[
+  {
+    "question_text": "题目内容",
+    "option_a": "选项A内容",
+    "option_b": "选项B内容",
+    "option_c": "选项C内容",
+    "option_d": "选项D内容",
+    "correct_answer": "A",
+    "explanation": "答案解析"
+  }
+]
+
+## 知识点内容
+---
+【知识点1】标题
+  内容...
+---
+
+请生成 5 道单选题（仅输出 JSON 数组）：
+```
+
+## 附录 C：知识点抽取 Prompt 模板（摘要）
+
+```text
+你是一个企业党建知识抽取专家，服务于企业内部考试系统的题库建设。
+
+## 抽取原则
+1. 可出题性：每个知识点应能作为考试题目的素材来源
+2. 独立完整：每个知识点是一个独立、自包含的知识单元
+3. 忠于原文：content 字段忠实反映原文表述
+
+## 粒度控制
+- 合并：同一条款的并列子项、同一制度的构成要素、同一流程的连续步骤
+- 拆分：不同主题/制度、独立可出题的条款、超过 300 字的多主题段落
+
+## 输出字段
+- title: 知识点标题（15字以内）
+- content: 详细内容（50~300字，ASCII 双引号改用「」）
+- summary: 一句话摘要
+- importance_score: 出题价值评分 0.0~1.0
+- tags: 标签列表（主题词、文件/章节、分类、知识类型）
+
+## 输出格式
+严格以 JSON 数组格式返回，不要包含任何其他文字。
+```
+
+## 附录 D：迁移脚本摘要
+
+```sql
+-- 历史脚本（ai_tb_*）：为四张题型表添加追溯列
+ALTER TABLE ai_tb_single_choices
+    ADD COLUMN document_id BIGINT NULL AFTER id,
+    ADD COLUMN task_id BIGINT NULL AFTER document_id,
+    ADD INDEX idx_sc_document_id (document_id),
+    ADD INDEX idx_sc_task_id (task_id);
+
+-- ai_tb_multiple_choices、ai_tb_judges、ai_tb_essays 同理
+
+-- 创建出题任务跟踪表
+CREATE TABLE IF NOT EXISTS question_tasks (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id BIGINT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    config TEXT NULL,
+    error_message TEXT NULL,
+    result_summary TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_qt_document_id (document_id),
+    INDEX idx_qt_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
