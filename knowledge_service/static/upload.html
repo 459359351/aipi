@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>文档上传 - 知识处理服务</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
+
 <body class="bg-gray-50">
     <div class="min-h-screen">
         <!-- 顶部导航 -->
@@ -31,7 +33,7 @@
         <div class="max-w-3xl mx-auto px-4 py-8">
             <div class="bg-white rounded-lg shadow-md p-8">
                 <h2 class="text-xl font-semibold mb-6 text-gray-800">上传文档</h2>
-                
+
                 <form id="uploadForm" class="space-y-6">
                     <!-- 文件选择 -->
                     <div>
@@ -54,38 +56,28 @@
 
                     <!-- 两列布局 -->
                     <div class="grid grid-cols-2 gap-4">
-                        <!-- 文档类型 -->
+                        <!-- 一级标签 -->
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">文档类型</label>
-                            <select id="docType" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">一级标签</label>
+                            <select id="docType" onchange="onFatherTagChange()"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                                 <option value="">请选择</option>
-                                <option value="规章制度">规章制度</option>
-                                <option value="管理办法">管理办法</option>
-                                <option value="通知通报">通知通报</option>
-                                <option value="工作方案">工作方案</option>
-                                <option value="会议纪要">会议纪要</option>
-                                <option value="学习资料">学习资料</option>
-                                <option value="政策法规">政策法规</option>
-                                <option value="其他">其他</option>
+                                <option value="工会工作">工会工作</option>
+                                <option value="共青团工作">共青团工作</option>
+                                <option value="CI工作">CI工作</option>
+                                <option value="舆情工作">舆情工作</option>
+                                <option value="党建工作">党建工作</option>
+                                <option value="企业文化">企业文化</option>
                             </select>
                         </div>
 
-                        <!-- 业务领域（党建业务方向） -->
+                        <!-- 二级标签 -->
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">业务领域</label>
-                            <select id="businessDomain" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <option value="">请选择</option>
-                                <option value="企业战略与经营管理">企业战略与经营管理</option>
-                                <option value="党的基本制度理论及相关要求">党的基本制度理论及相关要求</option>
-                                <option value="企业文化">企业文化</option>
-                                <option value="组织建设">组织建设</option>
-                                <option value="党员发展教育">党员发展教育</option>
-                                <option value="党风廉政建设">党风廉政建设</option>
-                                <option value="宣传工作">宣传工作</option>
-                                <option value="CI工作">CI工作</option>
-                                <option value="舆情工作">舆情工作</option>
-                                <option value="工会工作">工会工作</option>
-                                <option value="共青团工作">共青团工作</option>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">二级标签</label>
+                            <select id="businessDomain"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                disabled>
+                                <option value="">请先选择一级标签</option>
                             </select>
                         </div>
                     </div>
@@ -117,7 +109,8 @@
                         <!-- 安全等级 -->
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-2">安全等级</label>
-                            <select id="securityLevel" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <select id="securityLevel"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                                 <option value="internal">内部</option>
                                 <option value="public">公开</option>
                                 <option value="confidential">机密</option>
@@ -152,7 +145,8 @@
                         <span id="progressText" class="text-sm text-gray-600">0%</span>
                     </div>
                     <div class="w-full bg-gray-200 rounded-full h-2">
-                        <div id="progressBar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        <div id="progressBar" class="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                            style="width: 0%"></div>
                     </div>
                 </div>
 
@@ -165,6 +159,38 @@
     </div>
 
     <script>
+        // 一级→二级标签级联映射
+        const TAG_MAP = {
+            '工会工作': ['工会组织建设工作', '工会民主管理工作', '工会经济技术工作', '工会财务与经审工作', '工会女职工工作', '职工之家建设工作', '其他工会工作'],
+            '共青团工作': ['团的组织建设工作', '思想政治引领', '服务青年发展', '社会实践与志愿服务'],
+            'CI工作': ['标准化文件', '制度执行'],
+            '舆情工作': ['负面舆情案例', '制度执行'],
+            '党建工作': ['党的基本制度理论及相关要求', '党风廉政建设', '党员教育发展', '组织建设', '党建工作责任制考核'],
+            '企业文化': ['企业文化', '宣传工作'],
+        };
+
+        function onFatherTagChange() {
+            const fatherTag = document.getElementById('docType').value;
+            const subSelect = document.getElementById('businessDomain');
+            subSelect.innerHTML = '';
+
+            if (!fatherTag) {
+                subSelect.innerHTML = '<option value="">请先选择一级标签</option>';
+                subSelect.disabled = true;
+                return;
+            }
+
+            const subTags = TAG_MAP[fatherTag] || [];
+            subSelect.innerHTML = '<option value="">请选择</option>';
+            subTags.forEach(tag => {
+                const opt = document.createElement('option');
+                opt.value = tag;
+                opt.textContent = tag;
+                subSelect.appendChild(opt);
+            });
+            subSelect.disabled = false;
+        }
+
         const form = document.getElementById('uploadForm');
         const submitBtn = document.getElementById('submitBtn');
         const progressContainer = document.getElementById('progressContainer');
@@ -175,10 +201,10 @@
 
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+
             const fileInput = document.getElementById('fileInput');
             const file = fileInput.files[0];
-            
+
             if (!file) {
                 showResult('请选择文件', 'error');
                 return;
@@ -188,24 +214,24 @@
             const formData = new FormData();
             formData.append('file', file);
             formData.append('doc_name', document.getElementById('docName').value);
-            
+
             const docType = document.getElementById('docType').value;
             if (docType) formData.append('doc_type', docType);
-            
+
             const businessDomain = document.getElementById('businessDomain').value;
             if (businessDomain) formData.append('business_domain', businessDomain);
-            
+
             const orgDimension = document.getElementById('orgDimension').value;
             if (orgDimension) formData.append('org_dimension', orgDimension);
-            
+
             const version = document.getElementById('version').value;
             if (version) formData.append('version', version);
-            
+
             const effectiveDate = document.getElementById('effectiveDate').value;
             if (effectiveDate) formData.append('effective_date', effectiveDate);
-            
+
             formData.append('security_level', document.getElementById('securityLevel').value);
-            
+
             const uploadUser = document.getElementById('uploadUser').value;
             if (uploadUser) formData.append('upload_user', uploadUser);
 
@@ -241,7 +267,7 @@
         function showResult(message, type) {
             resultContainer.classList.remove('hidden');
             resultMessage.innerHTML = message;
-            
+
             if (type === 'success') {
                 resultMessage.className = 'p-4 rounded-md bg-green-50 text-green-800 border border-green-200';
             } else {
@@ -255,4 +281,5 @@
         }
     </script>
 </body>
+
 </html>

@@ -1,6 +1,7 @@
 from .document import Document
 from .knowledge_point import KnowledgePoint
 from .tag import Tag
+from .father_tag import FatherTag
 from .knowledge_tag_rel import knowledge_tag_rel
 from .question_tag_rel import question_tag_rel
 from .question_knowledge_rel import QuestionKnowledgeRel
@@ -10,8 +11,9 @@ from .user_profile import UserProfile
 from .user_question_behavior import UserQuestionBehavior
 
 __all__ = [
-    "Document", "KnowledgePoint", "Tag", "knowledge_tag_rel", "question_tag_rel",
+    "Document", "KnowledgePoint", "Tag", "FatherTag", "knowledge_tag_rel", "question_tag_rel",
     "QuestionKnowledgeRel",
     "SingleChoice", "MultipleChoice", "Judge", "Essay", "QuestionTask",
     "QuestionAuditLog", "UserProfile", "UserQuestionBehavior",
 ]
+

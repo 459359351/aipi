@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>推荐管理 - 知识处理服务</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
+
 <body class="bg-gray-50 min-h-screen">
     <nav class="bg-white shadow-sm border-b">
         <div class="max-w-6xl mx-auto px-4 py-3">
@@ -17,6 +19,7 @@
                     <a href="/static/list.html" class="text-gray-700 hover:text-blue-600">文档列表</a>
                     <a href="/static/generate.html" class="text-gray-700 hover:text-blue-600">AI 出题</a>
                     <a href="/static/practice.html" class="text-gray-700 hover:text-blue-600">模拟答题</a>
+                    <a href="/static/recommend-admin.html" class="text-blue-600 font-medium">推荐管理</a>
                     <a href="/static/tags.html" class="text-gray-700 hover:text-blue-600">标签管理</a>
                     <a href="/docs" class="text-gray-700 hover:text-blue-600">API 文档</a>
                 </div>
@@ -25,16 +28,18 @@
     </nav>
 
     <div class="max-w-3xl mx-auto px-4 py-8">
-        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6 hidden">
             <h2 class="text-lg font-semibold text-gray-800 mb-2">人工题目 · 知识点关联</h2>
             <p class="text-sm text-gray-600 mb-4">
                 题库中 <code class="bg-gray-100 px-1 rounded">document_id</code> 为空的题目为人工作业题，与文档/知识点无直接关联。
                 点击下方按钮后，系统会调用 LLM 结合题干与答案/解析提炼 1~3 个知识点，写入
                 <code class="bg-gray-100 px-1 rounded">knowledge_points</code>，并建立
                 <code class="bg-gray-100 px-1 rounded">question_knowledge_rel</code> 关联，便于「按错题推荐」时也能召回相关人工题。
-                同时，标签将优先匹配预设标签；无法匹配的会作为候选标签写入 <code class="bg-gray-100 px-1 rounded">tags(tag_type=candidate)</code> 供人工审核。
+                同时，标签将优先匹配预设标签；无法匹配的会作为候选标签写入 <code class="bg-gray-100 px-1 rounded">tags(tag_type=candidate)</code>
+                供人工审核。
             </p>
-            <button type="button" id="buildRelBtn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
+            <button type="button" id="buildRelBtn"
+                class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
                 为人工作业题目生成知识点关联
             </button>
             <p id="buildRelStatus" class="mt-4 text-sm hidden"></p>
@@ -52,53 +57,70 @@
                     <option value="judge">judge</option>
                     <option value="essay">essay</option>
                 </select>
-                <input id="qKeyword" type="text" placeholder="题干关键字（可选）" class="px-3 py-2 border border-gray-300 rounded-md">
-                <button type="button" id="loadPendingBtn" class="px-4 py-2 bg-gray-100 rounded-md hover:bg-gray-200">加载未审核题目</button>
+                <input id="qKeyword" type="text" placeholder="题干关键字（可选）"
+                    class="px-3 py-2 border border-gray-300 rounded-md">
+                <button type="button" id="loadPendingBtn"
+                    class="px-4 py-2 bg-gray-100 rounded-md hover:bg-gray-200">加载未审核题目</button>
             </div>
             <div id="tagAuditMsg" class="hidden mb-3 px-3 py-2 rounded text-sm"></div>
             <input id="qId" type="hidden">
             <div id="pendingList" class="space-y-2 mb-4"></div>
-            <div id="currentQuestionBanner" class="hidden mb-3 px-3 py-2 rounded border text-sm bg-blue-50 text-blue-700 border-blue-200"></div>
+            <div id="currentQuestionBanner"
+                class="hidden mb-3 px-3 py-2 rounded border text-sm bg-blue-50 text-blue-700 border-blue-200"></div>
             <div id="tagList" class="space-y-2 mb-3"></div>
 
             <hr class="my-6">
             <h3 class="text-base font-semibold text-gray-800 mb-2">AI 标签推荐与人工补充</h3>
             <div class="flex flex-wrap gap-2 mb-3">
-                <button type="button" id="aiSuggestBtn" class="px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">AI 推荐标签</button>
-                <input id="manualTagNames" type="text" placeholder="手工添加单个标签，如：组织建设" class="flex-1 min-w-[220px] px-3 py-2 border border-gray-300 rounded-md">
-                <button type="button" id="saveManualTagsBtn" class="px-3 py-2 bg-gray-800 text-white rounded-md hover:bg-black">添加并保存标签</button>
+                <button type="button" id="aiSuggestBtn"
+                    class="px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">AI 推荐标签</button>
+                <input id="manualTagNames" type="text" placeholder="手工添加单个标签，如：组织建设"
+                    class="flex-1 min-w-[220px] px-3 py-2 border border-gray-300 rounded-md">
+                <button type="button" id="saveManualTagsBtn"
+                    class="px-3 py-2 bg-gray-800 text-white rounded-md hover:bg-black">添加并保存标签</button>
             </div>
             <div class="flex flex-wrap gap-2 mb-3">
-                <input id="tagSearchKeyword" type="text" placeholder="搜索已存在可用标签关键字" class="flex-1 min-w-[220px] px-3 py-2 border border-gray-300 rounded-md">
-                <button type="button" id="searchTagsBtn" class="px-3 py-2 bg-gray-100 rounded-md hover:bg-gray-200">搜索标签</button>
+                <input id="tagSearchKeyword" type="text" placeholder="搜索已存在可用标签关键字"
+                    class="flex-1 min-w-[220px] px-3 py-2 border border-gray-300 rounded-md">
+                <button type="button" id="searchTagsBtn"
+                    class="px-3 py-2 bg-gray-100 rounded-md hover:bg-gray-200">搜索标签</button>
             </div>
             <div id="tagSearchList" class="space-y-2 mb-3"></div>
             <div id="suggestTagList" class="space-y-2"></div>
             <div class="flex gap-2 mt-3">
-                <button type="button" id="confirmBtn" class="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700">确认选中关联</button>
-                <button type="button" id="unconfirmBtn" class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700">取消选中确认</button>
+                <button type="button" id="confirmBtn"
+                    class="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700">确认选中关联</button>
+                <button type="button" id="unconfirmBtn"
+                    class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700">取消选中确认</button>
             </div>
 
             <hr class="my-6">
             <h3 class="text-base font-semibold text-gray-800 mb-2">题目内容编辑（一步审核生效）</h3>
             <div class="space-y-3">
-                <textarea id="editQuestionText" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="题干"></textarea>
+                <textarea id="editQuestionText" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="题干"></textarea>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <input id="editOptionA" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="选项A（单/多选）">
                     <input id="editOptionB" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="选项B（单/多选）">
                     <input id="editOptionC" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="选项C（单/多选）">
                     <input id="editOptionD" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="选项D（单/多选）">
                     <input id="editOptionE" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="选项E（多选可选）">
-                    <input id="editCorrectAnswer" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="正确答案（如 A 或 A,B 或 1/0）">
+                    <input id="editCorrectAnswer" class="px-3 py-2 border border-gray-300 rounded-md"
+                        placeholder="正确答案（如 A 或 A,B 或 1/0）">
                 </div>
-                <textarea id="editReferenceAnswer" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="参考答案（简答题）"></textarea>
-                <textarea id="editExplanation" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="解析"></textarea>
+                <textarea id="editReferenceAnswer" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="参考答案（简答题）"></textarea>
+                <textarea id="editExplanation" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="解析"></textarea>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <input id="editScore" type="number" min="0" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="分值">
-                    <input id="editOperator" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="审核人/编辑人（如 admin）">
+                    <input id="editScore" type="number" min="0" class="px-3 py-2 border border-gray-300 rounded-md"
+                        placeholder="分值">
+                    <input id="editOperator" class="px-3 py-2 border border-gray-300 rounded-md"
+                        placeholder="审核人/编辑人（如 admin）">
                     <input id="editRemark" class="px-3 py-2 border border-gray-300 rounded-md" placeholder="备注">
                 </div>
-                <button type="button" id="saveQuestionBtn" class="px-4 py-2 bg-emerald-700 text-white rounded-md hover:bg-emerald-800">审核提交通过</button>
+                <button type="button" id="saveQuestionBtn"
+                    class="px-4 py-2 bg-emerald-700 text-white rounded-md hover:bg-emerald-800">审核提交通过</button>
             </div>
         </div>
     </div>
@@ -117,7 +139,7 @@
 
         function debugPerfLog(location, message, data, hypothesisId = 'H0') {
             // #region agent log
-            fetch('http://127.0.0.1:7480/ingest/f6d85069-68f7-41b5-af08-81428990ce7b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'abf3c5'},body:JSON.stringify({sessionId:'abf3c5',runId:'ai_tag_perf',hypothesisId,location,message,data,timestamp:Date.now()})}).catch(()=>{});
+            fetch('http://127.0.0.1:7480/ingest/f6d85069-68f7-41b5-af08-81428990ce7b', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'abf3c5' }, body: JSON.stringify({ sessionId: 'abf3c5', runId: 'ai_tag_perf', hypothesisId, location, message, data, timestamp: Date.now() }) }).catch(() => { });
             // #endregion
         }
 
@@ -138,13 +160,13 @@
             return String(name || '').trim().replace(/\s+/g, ' ');
         }
 
-        function setAuditMsg(text, type='info') {
+        function setAuditMsg(text, type = 'info') {
             tagAuditMsg.classList.remove('hidden');
             tagAuditMsg.textContent = text;
             tagAuditMsg.className = 'mb-3 px-3 py-2 rounded text-sm ' + (
                 type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' :
-                type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
-                'bg-blue-50 text-blue-700 border border-blue-200'
+                    type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                        'bg-blue-50 text-blue-700 border border-blue-200'
             );
         }
 
@@ -680,7 +702,8 @@
         document.getElementById('saveQuestionBtn').addEventListener('click', saveQuestion);
 
         renderSuggestTags();
-        loadPendingQuestions().catch(() => {});
+        loadPendingQuestions().catch(() => { });
     </script>
 </body>
+
 </html>

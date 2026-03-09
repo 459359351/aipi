@@ -16,10 +16,18 @@ class Tag(Base):
     tag_type = Column(
         String(64), nullable=True, comment="标签分类（学科/难度/章节/考点类型）",
     )
+    father_tag = Column(
+        String(128), nullable=True,
+        comment="对应的一级标签名（多个用逗号分隔）",
+    )
     is_enabled = Column(
         SmallInteger, nullable=False, default=0, index=True,
         comment="是否可用标签：0 否（候选/待审核），1 是（人工确认）",
     )
 
     def __repr__(self) -> str:
-        return f"<Tag(id={self.id}, tag_name='{self.tag_name}', tag_type='{self.tag_type}', is_enabled={self.is_enabled})>"
+        return (
+            f"<Tag(id={self.id}, tag_name='{self.tag_name}', "
+            f"tag_type='{self.tag_type}', father_tag='{self.father_tag}', "
+            f"is_enabled={self.is_enabled})>"
+        )

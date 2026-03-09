@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>文档详情 - 知识处理服务</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
+
 <body class="bg-gray-50">
     <div class="min-h-screen">
         <!-- 顶部导航 -->
@@ -38,7 +40,9 @@
 
             <!-- 加载提示 -->
             <div id="loading" class="bg-white rounded-lg shadow-sm p-8 text-center">
-                <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-600 border-t-transparent"></div>
+                <div
+                    class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-600 border-t-transparent">
+                </div>
                 <p class="mt-2 text-gray-600">加载中...</p>
             </div>
 
@@ -50,23 +54,35 @@
                         <h2 id="docTitle" class="text-2xl font-bold text-gray-800"></h2>
                         <div id="statusBadge"></div>
                     </div>
-                    
+
                     <div class="grid grid-cols-2 gap-6 text-sm">
                         <div class="space-y-3">
-                            <div><span class="font-medium text-gray-700">文档 ID:</span> <span id="docId" class="text-gray-600"></span></div>
-                            <div><span class="font-medium text-gray-700">文档类型:</span> <span id="docType" class="text-gray-600"></span></div>
-                            <div><span class="font-medium text-gray-700">业务领域:</span> <span id="businessDomain" class="text-gray-600"></span></div>
-                            <div><span class="font-medium text-gray-700">组织维度:</span> <span id="orgDimension" class="text-gray-600"></span></div>
-                            <div><span class="font-medium text-gray-700">版本号:</span> <span id="version" class="text-gray-600"></span></div>
-                            <div><span class="font-medium text-gray-700">生效日期:</span> <span id="effectiveDate" class="text-gray-600"></span></div>
+                            <div><span class="font-medium text-gray-700">文档 ID:</span> <span id="docId"
+                                    class="text-gray-600"></span></div>
+                            <div><span class="font-medium text-gray-700">一级标签:</span> <span id="docType"
+                                    class="text-gray-600"></span></div>
+                            <div><span class="font-medium text-gray-700">二级标签:</span> <span id="businessDomain"
+                                    class="text-gray-600"></span></div>
+                            <div><span class="font-medium text-gray-700">组织维度:</span> <span id="orgDimension"
+                                    class="text-gray-600"></span></div>
+                            <div><span class="font-medium text-gray-700">版本号:</span> <span id="version"
+                                    class="text-gray-600"></span></div>
+                            <div><span class="font-medium text-gray-700">生效日期:</span> <span id="effectiveDate"
+                                    class="text-gray-600"></span></div>
                         </div>
                         <div class="space-y-3">
-                            <div><span class="font-medium text-gray-700">文件格式:</span> <span id="fileFormat" class="text-gray-600"></span></div>
-                            <div><span class="font-medium text-gray-700">文件大小:</span> <span id="fileSize" class="text-gray-600"></span></div>
-                            <div><span class="font-medium text-gray-700">文件哈希:</span> <span id="fileHash" class="text-gray-600 text-xs"></span></div>
-                            <div><span class="font-medium text-gray-700">安全等级:</span> <span id="securityLevel" class="text-gray-600"></span></div>
-                            <div><span class="font-medium text-gray-700">上传用户:</span> <span id="uploadUser" class="text-gray-600"></span></div>
-                            <div><span class="font-medium text-gray-700">上传时间:</span> <span id="uploadTime" class="text-gray-600"></span></div>
+                            <div><span class="font-medium text-gray-700">文件格式:</span> <span id="fileFormat"
+                                    class="text-gray-600"></span></div>
+                            <div><span class="font-medium text-gray-700">文件大小:</span> <span id="fileSize"
+                                    class="text-gray-600"></span></div>
+                            <div><span class="font-medium text-gray-700">文件哈希:</span> <span id="fileHash"
+                                    class="text-gray-600 text-xs"></span></div>
+                            <div><span class="font-medium text-gray-700">安全等级:</span> <span id="securityLevel"
+                                    class="text-gray-600"></span></div>
+                            <div><span class="font-medium text-gray-700">上传用户:</span> <span id="uploadUser"
+                                    class="text-gray-600"></span></div>
+                            <div><span class="font-medium text-gray-700">上传时间:</span> <span id="uploadTime"
+                                    class="text-gray-600"></span></div>
                         </div>
                     </div>
 
@@ -95,13 +111,16 @@
 
                     <!-- 操作按钮 -->
                     <div id="actionButtons" class="mt-6 flex space-x-3">
-                        <button onclick="reparseDocument()" id="reparseBtn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400">
+                        <button onclick="reparseDocument()" id="reparseBtn"
+                            class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400">
                             🔄 重新解析
                         </button>
-                        <button onclick="toggleEditForm()" id="editBtn" class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700">
+                        <button onclick="toggleEditForm()" id="editBtn"
+                            class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700">
                             ✏️ 编辑信息
                         </button>
-                        <button onclick="deleteDocument()" id="deleteBtn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">
+                        <button onclick="deleteDocument()" id="deleteBtn"
+                            class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">
                             🗑️ 删除文档
                         </button>
                     </div>
@@ -112,27 +131,34 @@
                         <div class="grid grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">文档名称</label>
-                                <input type="text" id="editDocName" class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                <input type="text" id="editDocName"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">文档类型</label>
-                                <input type="text" id="editDocType" class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="教材/大纲/试卷/课件">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">一级标签</label>
+                                <input type="text" id="editDocType"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                    placeholder="教材/大纲/试卷/课件">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">业务领域</label>
-                                <input type="text" id="editBusinessDomain" class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">二级标签</label>
+                                <input type="text" id="editBusinessDomain"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">组织维度</label>
-                                <input type="text" id="editOrgDimension" class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                <input type="text" id="editOrgDimension"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">版本号</label>
-                                <input type="text" id="editVersion" class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                <input type="text" id="editVersion"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">安全等级</label>
-                                <select id="editSecurityLevel" class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                <select id="editSecurityLevel"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
                                     <option value="public">公开</option>
                                     <option value="internal">内部</option>
                                     <option value="confidential">机密</option>
@@ -140,10 +166,12 @@
                             </div>
                         </div>
                         <div class="mt-4 flex space-x-3">
-                            <button onclick="submitEdit()" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm">
+                            <button onclick="submitEdit()"
+                                class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm">
                                 保存修改
                             </button>
-                            <button onclick="toggleEditForm()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">
+                            <button onclick="toggleEditForm()"
+                                class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">
                                 取消
                             </button>
                         </div>
@@ -154,13 +182,16 @@
                 <div class="bg-white rounded-lg shadow-md p-6">
                     <div class="flex items-center justify-between mb-4">
                         <h3 class="text-xl font-semibold text-gray-800">知识点列表</h3>
-                        <button onclick="loadKnowledgePoints()" class="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded-md">
+                        <button onclick="loadKnowledgePoints()"
+                            class="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded-md">
                             🔄 刷新
                         </button>
                     </div>
 
                     <div id="knowledgeLoading" class="text-center py-8 hidden">
-                        <div class="inline-block animate-spin rounded-full h-6 w-6 border-4 border-blue-600 border-t-transparent"></div>
+                        <div
+                            class="inline-block animate-spin rounded-full h-6 w-6 border-4 border-blue-600 border-t-transparent">
+                        </div>
                         <p class="mt-2 text-sm text-gray-600">加载知识点...</p>
                     </div>
 
@@ -178,7 +209,8 @@
             <div id="errorState" class="bg-white rounded-lg shadow-sm p-8 text-center hidden">
                 <p class="text-red-600 text-lg">❌ 加载失败</p>
                 <p id="errorText" class="text-gray-600 mt-2"></p>
-                <a href="/static/list.html" class="mt-4 inline-block px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                <a href="/static/list.html"
+                    class="mt-4 inline-block px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
                     返回列表
                 </a>
             </div>
@@ -311,11 +343,10 @@
                     <div class="flex items-center justify-between text-xs text-gray-500 mt-2 pt-2 border-t">
                         <span>创建时间: ${formatDateTime(kp.created_at)}</span>
                         ${kp.dify_sync_status ? `
-                            <span class="px-2 py-1 rounded ${
-                                kp.dify_sync_status === 'synced' ? 'bg-green-100 text-green-700' :
-                                kp.dify_sync_status === 'failed' ? 'bg-red-100 text-red-700' :
-                                'bg-yellow-100 text-yellow-700'
-                            }">
+                            <span class="px-2 py-1 rounded ${kp.dify_sync_status === 'synced' ? 'bg-green-100 text-green-700' :
+                        kp.dify_sync_status === 'failed' ? 'bg-red-100 text-red-700' :
+                            'bg-yellow-100 text-yellow-700'
+                    }">
                                 Dify: ${kp.dify_sync_status}
                             </span>
                         ` : ''}
@@ -478,4 +509,5 @@
         window.addEventListener('DOMContentLoaded', loadDocument);
     </script>
 </body>
+
 </html>
