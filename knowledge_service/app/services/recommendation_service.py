@@ -508,6 +508,13 @@ def recommend_by_profile(
         ).all()
         for r in rows:
             tag_ids.add(int(r[0]))
+        # 兴趣词可能是一级标签名，匹配其下所有子标签
+        for interest in interests:
+            rows = db.execute(
+                select(Tag.id).where(Tag.is_enabled == 1).where(Tag.father_tag.contains(interest))
+            ).all()
+            for r in rows:
+                tag_ids.add(int(r[0]))
     # 兜底：按部门/岗位词匹配标签名
     fallback_terms = [profile.department or "", profile.position or ""]
     for term in fallback_terms:
@@ -544,7 +551,7 @@ def recommend_by_profile(
             )
             .filter(question_tag_rel.c.tag_id.in_(list(tag_ids)) if tag_ids else True)
             .group_by(model.id)
-            .order_by(desc(func.count(func.distinct(question_tag_rel.c.tag_id))), desc(model.created_at))
+            .order_by(desc(func.count(func.distinct(question_tag_rel.c.tag_id))), func.rand())
             .limit(need * 3)
         )
         cands = query.all()
@@ -576,6 +583,241 @@ def recommend_by_profile(
         "requested": requested,
         "summary": summary,
         "items": items,
+    }
+
+
+def recommend_by_tags(
+    db: Session,
+    tag_ids: List[int],
+    single_count: int = 5,
+    multiple_count: int = 5,
+    judge_count: int = 5,
+    essay_count: int = 2,
+    user_id: Optional[str] = None,
+    position: Optional[str] = None,
+    level: Optional[str] = None,
+) -> Dict:
+    """按标签 ID 直接推荐题目（供 Tab C 的获取一道题使用）"""
+    if not tag_ids:
+        raise ValueError("tag_ids 不能为空")
+
+    # 合并传入的 tag_ids 和 position/level 匹配到的额外标签
+    all_tag_ids = set(tag_ids)
+    for term in [position, level]:
+        if term and term.strip():
+            rows = db.execute(
+                select(Tag.id).where(Tag.is_enabled == 1).where(Tag.tag_name.contains(term.strip()))
+            ).all()
+            for r in rows:
+                all_tag_ids.add(int(r[0]))
+    all_tag_ids = list(all_tag_ids)
+
+    requested = {
+        "single": max(0, int(single_count)),
+        "multiple": max(0, int(multiple_count)),
+        "judge": max(0, int(judge_count)),
+        "essay": max(0, int(essay_count)),
+    }
+    summary = {"single": 0, "multiple": 0, "judge": 0, "essay": 0}
+    items: List[Dict] = []
+
+    for q_type, need in requested.items():
+        if need <= 0:
+            continue
+        model = QUESTION_MODEL_MAP[q_type]
+        query = (
+            db.query(model)
+            .join(
+                question_tag_rel,
+                and_(
+                    question_tag_rel.c.question_type == q_type,
+                    question_tag_rel.c.question_id == model.id,
+                ),
+            )
+            .filter(question_tag_rel.c.tag_id.in_(all_tag_ids))
+            .group_by(model.id)
+            .order_by(
+                desc(func.count(func.distinct(question_tag_rel.c.tag_id))),
+                func.rand(),
+            )
+            .limit(need * 3)
+        )
+        cands = query.all()
+
+        if user_id:
+            scored = sorted(cands, key=lambda q: -_behavior_penalty(db, user_id, q_type, int(q.id)))
+        else:
+            scored = cands
+        selected = scored[:need]
+
+        for q in selected:
+            score_val = _behavior_penalty(db, user_id, q_type, int(q.id)) if user_id else 0
+            items.append(_serialize_question(
+                q_type, q,
+                related_score=int(score_val * 100),
+                recommend_reason="标签匹配",
+            ))
+        summary[q_type] = len(selected)
+
+    return {
+        "tag_ids": all_tag_ids,
+        "requested": requested,
+        "summary": summary,
+        "items": items,
+    }
+
+
+def recommend_question_set(
+    db: Session,
+    mode: str,
+    user_id: Optional[str] = None,
+    document_id: Optional[int] = None,
+    interests: Optional[List[str]] = None,
+    tag_ids: Optional[List[int]] = None,
+    position: Optional[str] = None,
+    level: Optional[str] = None,
+    count_ranges: Optional[Dict] = None,
+) -> Dict:
+    """
+    组卷：获取一套跨题型知识点不重复的套题。
+    mode: "document" | "interest" | "tags"
+    """
+    from .question_dedup import (
+        QUESTION_MODEL_MAP as DEDUP_MODEL_MAP,
+        DEFAULT_COUNT_RANGES,
+        build_candidate_pool,
+        assemble_question_set,
+    )
+
+    if count_ranges is None:
+        count_ranges = dict(DEFAULT_COUNT_RANGES)
+
+    # ── 第一步：根据 mode 收集各题型候选题 ──
+    candidates_by_type: Dict[str, list] = {}
+
+    if mode == "document":
+        if not document_id:
+            raise ValueError("mode=document 时 document_id 必填")
+        doc = db.query(Document).filter(Document.id == document_id).first()
+        if not doc:
+            raise ValueError("文档不存在")
+
+        knowledge_ids = _load_document_knowledge_ids(db, document_id)
+        tag_ids_from_doc = _load_document_tag_ids(db, document_id)
+
+        for q_type in ("single", "multiple", "judge", "essay"):
+            lo, hi = count_ranges.get(q_type, (0, 0))
+            fetch_limit = max(hi * 3, 30)
+            model = QUESTION_MODEL_MAP[q_type]
+            # 文档内题目
+            doc_qs = db.query(model).filter(model.document_id == document_id).order_by(func.rand()).limit(fetch_limit).all()
+            # 补充同标签人工题
+            doc_ids = [q.id for q in doc_qs]
+            supplement = _query_manual_related_questions_by_tags(
+                db, q_type, tag_ids_from_doc, limit=fetch_limit, exclude_ids=doc_ids, confirmed_only=False,
+            )
+            all_qs = doc_qs + list(supplement)
+            candidates_by_type[q_type] = build_candidate_pool(db, q_type, all_qs, user_id)
+
+    elif mode == "interest":
+        # 与 recommend_by_profile 类似，根据兴趣标签查
+        resolved_tag_ids = set()
+        if interests:
+            # 精确匹配 tag_name
+            rows = db.execute(
+                select(Tag.id).where(Tag.is_enabled == 1).where(Tag.tag_name.in_(interests))
+            ).all()
+            for r in rows:
+                resolved_tag_ids.add(int(r[0]))
+            # 兴趣词可能是一级标签名，匹配其下所有子标签
+            for interest in interests:
+                rows = db.execute(
+                    select(Tag.id).where(Tag.is_enabled == 1).where(Tag.father_tag.contains(interest))
+                ).all()
+                for r in rows:
+                    resolved_tag_ids.add(int(r[0]))
+
+        if not resolved_tag_ids:
+            raise ValueError("未匹配到任何标签，请检查兴趣标签输入")
+
+        for q_type in ("single", "multiple", "judge", "essay"):
+            lo, hi = count_ranges.get(q_type, (0, 0))
+            fetch_limit = max(hi * 3, 30)
+            model = QUESTION_MODEL_MAP[q_type]
+            qs = (
+                db.query(model)
+                .join(question_tag_rel, and_(
+                    question_tag_rel.c.question_type == q_type,
+                    question_tag_rel.c.question_id == model.id,
+                ))
+                .filter(question_tag_rel.c.tag_id.in_(list(resolved_tag_ids)))
+                .group_by(model.id)
+                .order_by(desc(func.count(func.distinct(question_tag_rel.c.tag_id))))
+                .limit(fetch_limit)
+                .all()
+            )
+            candidates_by_type[q_type] = build_candidate_pool(db, q_type, qs, user_id)
+
+    elif mode == "tags":
+        if not tag_ids:
+            raise ValueError("mode=tags 时 tag_ids 必填")
+        # 如果提供了 position/level，也尝试匹配更多标签
+        extra_tag_ids = set(tag_ids)
+        for term in [position, level]:
+            if term and term.strip():
+                rows = db.execute(
+                    select(Tag.id).where(Tag.is_enabled == 1).where(Tag.tag_name.contains(term.strip()))
+                ).all()
+                for r in rows:
+                    extra_tag_ids.add(int(r[0]))
+
+        all_tag_ids = list(extra_tag_ids)
+        for q_type in ("single", "multiple", "judge", "essay"):
+            lo, hi = count_ranges.get(q_type, (0, 0))
+            fetch_limit = max(hi * 3, 30)
+            model = QUESTION_MODEL_MAP[q_type]
+            qs = (
+                db.query(model)
+                .join(question_tag_rel, and_(
+                    question_tag_rel.c.question_type == q_type,
+                    question_tag_rel.c.question_id == model.id,
+                ))
+                .filter(question_tag_rel.c.tag_id.in_(all_tag_ids))
+                .group_by(model.id)
+                .order_by(desc(func.count(func.distinct(question_tag_rel.c.tag_id))))
+                .limit(fetch_limit)
+                .all()
+            )
+            candidates_by_type[q_type] = build_candidate_pool(db, q_type, qs, user_id)
+    else:
+        raise ValueError(f"不支持的 mode: {mode}")
+
+    # ── 第二步：贪心去重组卷 ──
+    result = assemble_question_set(candidates_by_type, count_ranges)
+
+    # ── 第三步：序列化 ──
+    groups: Dict[str, list] = {}
+    counts: Dict[str, int] = {}
+    total = 0
+    for q_type in ("single", "multiple", "judge", "essay"):
+        selected = result.get(q_type, [])
+        serialized = [
+            _serialize_question(
+                q_type, c.question_obj,
+                related_score=int(c.score * 100),
+                recommend_reason="套题组卷",
+            )
+            for c in selected
+        ]
+        groups[q_type] = serialized
+        counts[q_type] = len(serialized)
+        total += len(serialized)
+
+    return {
+        "mode": mode,
+        "total": total,
+        "counts": counts,
+        "groups": groups,
     }
 
 
@@ -634,9 +876,9 @@ def build_manual_question_knowledge_rel(db: Session) -> Dict:
     - 对每道人工题（含答案/解析）调用 LLM 提炼 1~3 个知识点
     - 知识点写入 knowledge_points（归入一个「系统文档」：人工题目知识点）
     - 将知识点与题目写入 question_knowledge_rel
-    - 知识点 tags 优先匹配预设标签簇；候选新标签写入 tags(tag_type=candidate) 供人工审核
+    - 知识点 tags 优先匹配预设标签簇；候选新标签写入 tags(tag_type=ai) 供人工审核
     """
-    # 预设标签簇：仅启用标签，且排除 candidate
+    # 预设标签簇：仅启用标签，且排除 ai 类型
     tags = db.query(Tag).all()
     preset_tags: dict[str, list[str]] = {}
     existing_tag_map: dict[str, tuple[str, int]] = {}
@@ -644,7 +886,7 @@ def build_manual_question_knowledge_rel(db: Session) -> Dict:
         existing_tag_map[t.tag_name] = ((t.tag_type or ""), int(t.is_enabled or 0))
         if int(t.is_enabled or 0) != 1:
             continue
-        if not t.tag_type or t.tag_type == "candidate":
+        if not t.tag_type or t.tag_type == "ai":
             continue
         preset_tags.setdefault(t.tag_type, []).append(t.tag_name)
 
@@ -733,11 +975,11 @@ def build_manual_question_knowledge_rel(db: Session) -> Dict:
 
                 # 关联预设标签
                 for tag_name in ep.tags:
-                    tag_type, enabled = existing_tag_map.get(tag_name, ("candidate", 0))
+                    tag_type, enabled = existing_tag_map.get(tag_name, ("ai", 0))
                     if enabled != 1:
                         # 非可用标签不自动挂接到知识点
                         document_service.get_or_create_tag(
-                            db, tag_name=tag_name, tag_type="candidate", is_enabled=0
+                            db, tag_name=tag_name, tag_type="ai", is_enabled=0
                         )
                         continue
                     tag = document_service.get_or_create_tag(
@@ -747,14 +989,14 @@ def build_manual_question_knowledge_rel(db: Session) -> Dict:
                     if getattr(tag, "id", None):
                         per_question_tag_ids.add(int(tag.id))
 
-                # 候选新标签：只入 tags 表为 candidate（不挂到知识点）
+                # 候选新标签：只入 tags 表为 ai（不挂到知识点）
                 for cand in ep.new_tags or []:
                     cand_name = str(cand).strip()
                     if not cand_name:
                         continue
                     candidate_tags_seen.add(cand_name)
                     document_service.get_or_create_tag(
-                        db, tag_name=cand_name, tag_type="candidate", is_enabled=0
+                        db, tag_name=cand_name, tag_type="ai", is_enabled=0
                     )
 
                 key = (q_type, row.id, kp.id)

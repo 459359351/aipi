@@ -10,12 +10,16 @@ from ..database import get_db
 from ..schemas.recommendation import (
     ByDocumentRecommendationResponse,
     ByQuestionRecommendationResponse,
+    ByTagsRecommendationResponse,
+    QuestionSetResponse,
 )
 from ..services.recommendation_service import (
     build_manual_question_knowledge_rel,
     recommend_by_profile,
     recommend_by_document,
     recommend_by_question,
+    recommend_by_tags,
+    recommend_question_set,
 )
 from ..models.user_question_behavior import UserQuestionBehavior
 from ..models.user_profile import UserProfile
@@ -147,6 +151,104 @@ async def record_behavior(body: dict, db: Session = Depends(get_db)):
     return {"recorded": True}
 
 
+@router.get(
+    "/question-set",
+    response_model=QuestionSetResponse,
+    summary="获取套题（跨题型知识点不重复）",
+)
+async def get_question_set(
+    mode: str = Query(..., description="出题模式：document/interest/tags"),
+    name: str = Query("", description="姓名（用作 user_id）"),
+    document_id: int | None = Query(None, description="mode=document 时必填"),
+    interests: str = Query("", description="mode=interest 时，逗号分隔的兴趣标签"),
+    position: str = Query("", description="mode=tags 时的岗位"),
+    level: str = Query("", description="mode=tags 时的级别"),
+    tag_ids: str = Query("", description="mode=tags 时，逗号分隔的标签 ID"),
+    db: Session = Depends(get_db),
+):
+    parsed_interests = [x.strip() for x in interests.split(",") if x.strip()] if interests else None
+    parsed_tag_ids = [int(x.strip()) for x in tag_ids.split(",") if x.strip()] if tag_ids else None
+    user_id = name.strip() or None
+
+    try:
+        return recommend_question_set(
+            db=db,
+            mode=mode,
+            user_id=user_id,
+            document_id=document_id,
+            interests=parsed_interests,
+            tag_ids=parsed_tag_ids,
+            position=position.strip() or None,
+            level=level.strip() or None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/by-tags",
+    response_model=ByTagsRecommendationResponse,
+    summary="按标签 ID 推荐练习题",
+)
+async def get_recommendations_by_tags(
+    tag_ids: str = Query(..., description="逗号分隔的标签 ID"),
+    single_count: int = Query(1, ge=0, le=100),
+    multiple_count: int = Query(1, ge=0, le=100),
+    judge_count: int = Query(1, ge=0, le=100),
+    essay_count: int = Query(0, ge=0, le=50),
+    user_id: str | None = Query(None, description="可选：姓名，用于行为重排"),
+    position: str = Query("", description="可选：岗位，用于匹配额外标签"),
+    level: str = Query("", description="可选：级别，用于匹配额外标签"),
+    db: Session = Depends(get_db),
+):
+    parsed_ids = [int(x.strip()) for x in tag_ids.split(",") if x.strip()]
+    if not parsed_ids:
+        raise HTTPException(status_code=400, detail="tag_ids 不能为空")
+    try:
+        return recommend_by_tags(
+            db=db,
+            tag_ids=parsed_ids,
+            single_count=single_count,
+            multiple_count=multiple_count,
+            judge_count=judge_count,
+            essay_count=essay_count,
+            user_id=user_id,
+            position=position.strip() or None,
+            level=level.strip() or None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/behaviors/batch-record",
+    summary="批量记录用户作答行为",
+)
+async def batch_record_behavior(body: dict, db: Session = Depends(get_db)):
+    user_id = str(body.get("user_id") or "").strip()
+    answers = body.get("answers") or []
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id 必填")
+    recorded = 0
+    for ans in answers:
+        q_type = str(ans.get("question_type") or "").strip().lower()
+        q_id = int(ans.get("question_id") or 0)
+        is_correct = 1 if int(ans.get("is_correct", 0) or 0) == 1 else 0
+        time_spent = max(0, int(ans.get("time_spent_sec", 0) or 0))
+        if q_type not in ("single", "multiple", "judge", "essay") or q_id <= 0:
+            continue
+        db.add(UserQuestionBehavior(
+            user_id=user_id,
+            question_type=q_type,
+            question_id=q_id,
+            is_correct=is_correct,
+            time_spent_sec=time_spent,
+        ))
+        recorded += 1
+    db.commit()
+    return {"recorded": recorded}
+
+
 @router.post(
     "/profiles/upsert",
     summary="创建/更新用户画像",
@@ -157,6 +259,7 @@ async def upsert_profile(body: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="user_id 必填")
     department = body.get("department")
     position = body.get("position")
+    level = body.get("level")
     interests = body.get("interests") or []
     profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
     if not profile:
@@ -164,6 +267,7 @@ async def upsert_profile(body: dict, db: Session = Depends(get_db)):
         db.add(profile)
     profile.department = department
     profile.position = position
+    profile.level = level
     profile.interests = json.dumps(interests, ensure_ascii=False)
     db.commit()
     return {"upserted": True, "user_id": user_id}

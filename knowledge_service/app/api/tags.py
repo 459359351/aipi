@@ -21,11 +21,8 @@ router = APIRouter(prefix="/tags", tags=["标签管理"])
 
 
 TAG_TYPE_ENUM = {
-    "domain": "业务/主题",
-    "chapter": "来源章节",
-    "knowledge_type": "知识类型",
-    "difficulty": "难度",
-    "candidate": "候选（待审核）",
+    "human": "人工确认",
+    "ai": "AI 生成",
 }
 
 

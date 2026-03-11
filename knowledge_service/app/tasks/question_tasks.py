@@ -27,17 +27,29 @@ from ..services.question_generator import (
 logger = logging.getLogger(__name__)
 
 
-def _build_knowledge_context(kps: list) -> str:
-    """将知识点列表拼接为供 LLM 阅读的文本上下文"""
+def _build_knowledge_context(kps: list, existing_coverage: dict = None) -> str:
+    """
+    将知识点列表拼接为供 LLM 阅读的文本上下文。
+
+    existing_coverage: 可选，{kp_id: set_of_question_types}。
+    当提供时，会在知识点后附加已有题型标注，提示 LLM 避免重复出同题型。
+    """
+    type_label = {"single": "单选", "multiple": "多选", "judge": "判断", "essay": "简答"}
     parts = []
     for i, kp in enumerate(kps, 1):
         tags_str = ""
         if kp.tags:
             tag_names = [t.tag_name for t in kp.tags]
             tags_str = f"  标签: {', '.join(tag_names)}\n"
+        coverage_str = ""
+        if existing_coverage and kp.id in existing_coverage:
+            types = existing_coverage[kp.id]
+            labels = [type_label.get(t, t) for t in types]
+            coverage_str = f"  [已有题型: {', '.join(labels)}]\n"
         parts.append(
             f"【知识点{i}】{kp.title}\n"
             f"{tags_str}"
+            f"{coverage_str}"
             f"  {kp.content}\n"
         )
     return "\n".join(parts)
@@ -284,6 +296,19 @@ def process_question_task(task_id: int, document_id: int, config: dict) -> None:
 
         # ── Step 4: 提交并更新任务 ────────────────────────
         db.commit()
+
+        # 可选：跨题型知识点重复检测（信息性，不修改数据）
+        try:
+            from ..services.question_dedup import check_task_duplicates
+            dedup_info = check_task_duplicates(db, task_id)
+            if dedup_info.get("duplicate_pairs"):
+                logger.warning(
+                    "[出题] task_id=%s 检测到 %d 对跨题型知识点重复",
+                    task_id, len(dedup_info["duplicate_pairs"]),
+                )
+                result_summary["dedup_warning"] = dedup_info
+        except Exception as e:
+            logger.debug("[出题] 去重检测跳过: %s", e)
 
         task.status = "completed"
         task.result_summary = json.dumps(result_summary, ensure_ascii=False)

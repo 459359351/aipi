@@ -239,6 +239,10 @@ WHERE
         '宣传工作'
     );
 
+-- Step 6: 统一 tag_type 字段：is_enabled=1 的置为 human，其余置为 ai
+UPDATE tags SET tag_type = 'human' WHERE is_enabled = 1;
+UPDATE tags SET tag_type = 'ai' WHERE is_enabled != 1 OR is_enabled IS NULL;
+
 SELECT '迁移完成' AS result;
 
 SELECT CONCAT(

@@ -48,6 +48,28 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"MinIO bucket 初始化失败（服务可能未启动）: {e}")
 
+    # 预加载 jieba 分词（避免首次调用 1-2s 延迟）
+    logger.info("预加载 jieba 分词词典...")
+    try:
+        import jieba
+        import jieba.analyse
+        jieba.initialize()
+        # 将数据库中已有的标签名加入自定义词典，提升领域分词精度
+        from .database import SessionLocal
+        from .models.tag import Tag
+        _db = SessionLocal()
+        try:
+            tags = _db.query(Tag.tag_name).filter(Tag.is_enabled == 1).all()
+            for (name,) in tags:
+                if name and len(name) >= 2:
+                    jieba.add_word(name, freq=50000, tag="nz")  # nz=专有名词，高词频确保不被切分
+                    jieba.analyse.set_idf_freq(name, 15.0)      # 提高 TF-IDF 权重
+            logger.info("jieba 已加载 %d 个领域标签词", len(tags))
+        finally:
+            _db.close()
+    except Exception as e:
+        logger.warning("jieba 预加载跳过: %s", e)
+
     logger.info("应用启动完成")
     yield
 

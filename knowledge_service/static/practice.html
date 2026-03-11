@@ -6,6 +6,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>模拟答题 - 知识处理服务</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .tab-btn.active { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; }
+        .tab-btn { transition: all 0.15s; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        .q-card { transition: all 0.15s; }
+        .q-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .correct-border { border-left: 4px solid #22c55e; }
+        .wrong-border { border-left: 4px solid #ef4444; }
+    </style>
 </head>
 
 <body class="bg-gray-50 min-h-screen">
@@ -18,65 +28,144 @@
                     <a href="/static/upload.html" class="text-gray-700 hover:text-blue-600">上传文档</a>
                     <a href="/static/list.html" class="text-gray-700 hover:text-blue-600">文档列表</a>
                     <a href="/static/generate.html" class="text-gray-700 hover:text-blue-600">AI 出题</a>
-                    <a href="/static/practice.html" class="text-blue-600 font-medium">模拟答题</a>
                     <a href="/static/recommend-admin.html" class="text-gray-700 hover:text-blue-600">题目审核</a>
-                    <a href="/static/tags.html" class="text-gray-700 hover:text-blue-600">标签管理</a>
+                    <a href="/static/practice.html" class="text-blue-600 font-medium">模拟答题</a>
+                    <a href="/static/tags.html" class="text-gray-700 hover:text-blue-600" style="display:none">标签管理</a>
                     <a href="/docs" class="text-gray-700 hover:text-blue-600">API 文档</a>
                 </div>
             </div>
         </div>
     </nav>
 
-    <div class="max-w-3xl mx-auto px-4 py-8">
-        <!-- 选择文档与取题 -->
-        <div id="chooseSection" class="bg-white rounded-lg shadow-md p-6 mb-6">
-            <h2 class="text-lg font-semibold text-gray-800 mb-4">1. 选择文档并获取题目</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-                <input id="userIdInput" type="text" placeholder="用户ID（可选，用于行为重排）"
-                    class="px-3 py-2 border border-gray-300 rounded-md">
-                <input id="interestsInput" type="text" placeholder="兴趣标签（逗号分隔，可选）"
-                    class="px-3 py-2 border border-gray-300 rounded-md">
+    <div class="max-w-4xl mx-auto px-4 py-8">
+        <!-- 出题设置 -->
+        <div id="chooseSection" class="bg-white rounded-xl shadow-sm border p-6 mb-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">选择出题方式</h2>
+
+            <!-- 姓名（共享） -->
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">姓名</label>
+                <input id="nameInput" type="text" placeholder="请输入姓名（用于行为记录与推荐）"
+                    class="w-full max-w-sm px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
             </div>
-            <div class="flex flex-wrap gap-4 items-end">
-                <div class="flex-1 min-w-[200px]">
+
+            <!-- Tab 切换 -->
+            <div class="border-b mb-4">
+                <div class="flex gap-0">
+                    <button class="tab-btn active px-5 py-2.5 text-sm border-b-2 border-transparent text-gray-500 hover:text-blue-600"
+                        data-tab="document" onclick="switchTab('document')">按文档</button>
+                    <button class="tab-btn px-5 py-2.5 text-sm border-b-2 border-transparent text-gray-500 hover:text-blue-600"
+                        data-tab="interest" onclick="switchTab('interest')">按兴趣标签</button>
+                    <button class="tab-btn px-5 py-2.5 text-sm border-b-2 border-transparent text-gray-500 hover:text-blue-600"
+                        data-tab="tags" onclick="switchTab('tags')">按岗位标签</button>
+                </div>
+            </div>
+
+            <!-- Tab A: 按文档 -->
+            <div id="panel-document" class="tab-panel active">
+                <div class="mb-1">
                     <label class="block text-sm font-medium text-gray-700 mb-1">文档</label>
                     <select id="docSelect"
-                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
                         <option value="">-- 加载中 --</option>
                     </select>
                 </div>
-                <button type="button" id="fetchQuestionBtn"
-                    class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+            </div>
+
+            <!-- Tab B: 按兴趣标签 -->
+            <div id="panel-interest" class="tab-panel">
+                <div class="mb-1">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">兴趣标签</label>
+                    <input id="interestsInput" type="text" placeholder="输入兴趣标签，逗号分隔（如：组织建设,党费管理）"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+            </div>
+
+            <!-- Tab C: 按岗位标签 -->
+            <div id="panel-tags" class="tab-panel">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">岗位</label>
+                        <input id="positionInput" type="text" placeholder="如：科长"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">级别</label>
+                        <input id="levelInput" type="text" placeholder="如：中级"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">一级标签</label>
+                        <select id="fatherTagSelect"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                            onchange="loadSubTags()">
+                            <option value="">-- 请选择一级标签 --</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">二级标签（可多选）</label>
+                        <div id="subTagContainer"
+                            class="w-full min-h-[42px] max-h-40 overflow-y-auto px-3 py-2 border border-gray-300 rounded-lg bg-white">
+                            <span class="text-sm text-gray-400">请先选择一级标签</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 按钮 -->
+            <div class="flex flex-wrap gap-3 mt-5">
+                <button type="button" id="fetchOneBtn" onclick="fetchOneQuestion()"
+                    class="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm transition">
                     获取一道题
                 </button>
-                <button type="button" id="fetchByProfileBtn"
-                    class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700">
-                    按画像获取题目
+                <button type="button" id="fetchSetBtn" onclick="fetchQuestionSet()"
+                    class="px-5 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium text-sm transition">
+                    获取套题
                 </button>
             </div>
             <p id="fetchError" class="mt-2 text-sm text-red-600 hidden"></p>
         </div>
 
-        <!-- 当前题目展示 -->
-        <div id="questionSection" class="bg-white rounded-lg shadow-md p-6 mb-6 hidden">
-            <h2 class="text-lg font-semibold text-gray-800 mb-4">2. 作答</h2>
-            <div id="questionBody" class="mb-6"></div>
+        <!-- 单题模式 -->
+        <div id="questionSection" class="bg-white rounded-xl shadow-sm border p-6 mb-6 hidden">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">作答</h2>
+            <div id="questionBody" class="mb-4"></div>
             <div id="answerArea" class="mb-4"></div>
             <div class="flex gap-3">
                 <button type="button" id="submitAnswerBtn"
-                    class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">
+                    class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium">
                     提交答案
                 </button>
                 <button type="button" id="mockWrongBtn"
-                    class="px-4 py-2 bg-amber-500 text-white rounded-md hover:bg-amber-600">
+                    class="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 text-sm font-medium">
                     模拟答错（触发推荐）
                 </button>
             </div>
             <div id="resultMessage" class="mt-4 hidden"></div>
         </div>
 
-        <!-- 答错后：推荐练习更多 -->
-        <div id="recommendSection" class="bg-white rounded-lg shadow-md p-6 hidden">
+        <!-- 套题模式 -->
+        <div id="questionSetSection" class="hidden">
+            <div class="bg-white rounded-xl shadow-sm border p-6 mb-4">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-semibold text-gray-800">套题练习</h2>
+                    <span id="setCountBadge" class="text-sm text-gray-500"></span>
+                </div>
+                <div id="questionSetBody" class="space-y-6"></div>
+                <div class="mt-6 pt-4 border-t">
+                    <button type="button" onclick="submitAllAnswers()"
+                        class="px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-sm transition">
+                        提交全部答案
+                    </button>
+                    <div id="setResultMessage" class="mt-4 hidden"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 答错推荐 -->
+        <div id="recommendSection" class="bg-white rounded-xl shadow-sm border p-6 hidden">
             <h2 class="text-lg font-semibold text-gray-800 mb-2">推荐练习更多（与错题相关）</h2>
             <p class="text-sm text-gray-500 mb-4">基于当前错题的知识点/同文档题目推荐</p>
             <div id="recommendLoading" class="text-gray-500 hidden">加载中...</div>
@@ -86,9 +175,61 @@
 
     <script>
         const API_BASE = '/api/v1';
-        let currentQuestion = null; // { question_type, question_id, question_text, options?, correct_answer, ... }
+        let currentTab = 'document';
+        let currentQuestion = null;
         let currentStartAt = null;
+        let questionSetData = null; // { groups: { single: [...], ... } }
 
+        // ─── Tab 切换 ───────────────────────────────────
+        function switchTab(tab) {
+            currentTab = tab;
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.tab === tab);
+            });
+            document.querySelectorAll('.tab-panel').forEach(panel => {
+                panel.classList.toggle('active', panel.id === `panel-${tab}`);
+            });
+            hideError();
+        }
+
+        // ─── 工具函数 ───────────────────────────────────
+        function getName() { return (document.getElementById('nameInput').value || '').trim(); }
+        function hideError() { document.getElementById('fetchError').classList.add('hidden'); }
+        function showError(msg) {
+            const el = document.getElementById('fetchError');
+            el.textContent = msg;
+            el.classList.remove('hidden');
+        }
+        function escapeHtml(s) {
+            if (s == null) return '';
+            const div = document.createElement('div');
+            div.textContent = s;
+            return div.innerHTML;
+        }
+        const TYPE_LABEL = { single: '单选题', multiple: '多选题', judge: '判断题', essay: '简答题' };
+        const TYPE_SHORT = { single: '单选', multiple: '多选', judge: '判断', essay: '简答' };
+
+        function setLoading(isLoading) {
+            const oneBtn = document.getElementById('fetchOneBtn');
+            const setBtn = document.getElementById('fetchSetBtn');
+            oneBtn.disabled = isLoading;
+            setBtn.disabled = isLoading;
+            if (isLoading) {
+                oneBtn.dataset.origText = oneBtn.textContent;
+                setBtn.dataset.origText = setBtn.textContent;
+                oneBtn.textContent = '加载中…';
+                setBtn.textContent = '加载中…';
+                oneBtn.classList.add('opacity-60', 'cursor-not-allowed');
+                setBtn.classList.add('opacity-60', 'cursor-not-allowed');
+            } else {
+                oneBtn.textContent = oneBtn.dataset.origText || '获取一道题';
+                setBtn.textContent = setBtn.dataset.origText || '获取套题';
+                oneBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+                setBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+            }
+        }
+
+        // ─── 数据加载 ───────────────────────────────────
         async function loadDocuments() {
             const sel = document.getElementById('docSelect');
             try {
@@ -101,135 +242,375 @@
                     opt.textContent = `[ID:${d.id}] ${d.doc_name || '未命名'}`;
                     sel.appendChild(opt);
                 });
-            } catch (e) {
-                sel.innerHTML = '<option value="">加载失败</option>';
-            }
+            } catch { sel.innerHTML = '<option value="">加载失败</option>'; }
         }
 
-        async function fetchOneQuestion() {
-            const docId = document.getElementById('docSelect').value;
-            const errEl = document.getElementById('fetchError');
-            errEl.classList.add('hidden');
-            if (!docId) {
-                errEl.textContent = '请先选择文档';
-                errEl.classList.remove('hidden');
-                return;
-            }
+        async function loadFatherTags() {
+            const sel = document.getElementById('fatherTagSelect');
             try {
-                const r = await fetch(
-                    `${API_BASE}/recommendations/by-document/${docId}?single_count=1&multiple_count=1&judge_count=1&essay_count=0&include_manual=true&user_id=${encodeURIComponent((document.getElementById('userIdInput').value || '').trim())}`
-                );
-                if (!r.ok) throw new Error(await r.text());
+                const r = await fetch(`${API_BASE}/tags/father-tags`);
                 const data = await r.json();
-                const items = data.items || [];
-                if (items.length === 0) {
-                    errEl.textContent = '该文档下暂无题目，请先使用 AI 出题 生成题目';
-                    errEl.classList.remove('hidden');
-                    return;
-                }
-                currentQuestion = items[0];
-                renderQuestion(currentQuestion);
-                currentStartAt = Date.now();
-                document.getElementById('questionSection').classList.remove('hidden');
-                document.getElementById('recommendSection').classList.add('hidden');
-                document.getElementById('resultMessage').classList.add('hidden');
-            } catch (e) {
-                errEl.textContent = e.message || '获取题目失败';
-                errEl.classList.remove('hidden');
-            }
-        }
-
-        async function fetchOneQuestionByProfile() {
-            const userId = (document.getElementById('userIdInput').value || '').trim();
-            const interestsText = (document.getElementById('interestsInput').value || '').trim();
-            const errEl = document.getElementById('fetchError');
-            errEl.classList.add('hidden');
-            if (!userId) {
-                errEl.textContent = '请先输入用户ID';
-                errEl.classList.remove('hidden');
-                return;
-            }
-            try {
-                const interests = interestsText ? interestsText.split(',').map(x => x.trim()).filter(Boolean) : [];
-                await fetch(`${API_BASE}/recommendations/profiles/upsert`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ user_id: userId, interests }),
+                sel.innerHTML = '<option value="">-- 请选择一级标签 --</option>';
+                (data.items || data || []).forEach(ft => {
+                    const opt = document.createElement('option');
+                    opt.value = ft.tag_name || ft.name || '';
+                    opt.textContent = ft.tag_name || ft.name || '';
+                    sel.appendChild(opt);
                 });
-                const r = await fetch(
-                    `${API_BASE}/recommendations/by-profile/${encodeURIComponent(userId)}?single_count=1&multiple_count=1&judge_count=1&essay_count=0`
-                );
+            } catch { sel.innerHTML = '<option value="">加载失败</option>'; }
+        }
+
+        async function loadSubTags() {
+            const container = document.getElementById('subTagContainer');
+            const fatherTag = document.getElementById('fatherTagSelect').value;
+            if (!fatherTag) {
+                container.innerHTML = '<span class="text-sm text-gray-400">请先选择一级标签</span>';
+                return;
+            }
+            container.innerHTML = '<span class="text-sm text-gray-400">加载中...</span>';
+            try {
+                const r = await fetch(`${API_BASE}/tags/sub-tags?father_tag=${encodeURIComponent(fatherTag)}`);
+                const data = await r.json();
+                const tags = data.items || data || [];
+                if (tags.length === 0) {
+                    container.innerHTML = '<span class="text-sm text-gray-400">该一级标签下无二级标签</span>';
+                    return;
+                }
+                container.innerHTML = '';
+                tags.forEach(t => {
+                    const label = document.createElement('label');
+                    label.className = 'flex items-center gap-2 py-1 cursor-pointer text-sm';
+                    label.innerHTML = `<input type="checkbox" class="sub-tag-cb rounded" value="${t.id}" data-name="${escapeHtml(t.tag_name)}"> ${escapeHtml(t.tag_name)}`;
+                    container.appendChild(label);
+                });
+            } catch { container.innerHTML = '<span class="text-sm text-red-500">加载失败</span>'; }
+        }
+
+        function getSelectedSubTagIds() {
+            return Array.from(document.querySelectorAll('.sub-tag-cb:checked')).map(cb => cb.value);
+        }
+
+        // ─── 获取一道题 ─────────────────────────────────
+        async function fetchOneQuestion() {
+            hideError();
+            setLoading(true);
+            const name = getName();
+
+            try {
+                let url;
+                if (currentTab === 'document') {
+                    const docId = document.getElementById('docSelect').value;
+                    if (!docId) { showError('请先选择文档'); return; }
+                    url = `${API_BASE}/recommendations/by-document/${docId}?single_count=1&multiple_count=1&judge_count=1&essay_count=0&include_manual=true&user_id=${encodeURIComponent(name)}`;
+                } else if (currentTab === 'interest') {
+                    if (!name) { showError('请先输入姓名'); return; }
+                    const interests = (document.getElementById('interestsInput').value || '').trim();
+                    const tags = interests ? interests.split(',').map(x => x.trim()).filter(Boolean) : [];
+                    await fetch(`${API_BASE}/recommendations/profiles/upsert`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id: name, interests: tags }),
+                    });
+                    url = `${API_BASE}/recommendations/by-profile/${encodeURIComponent(name)}?single_count=1&multiple_count=1&judge_count=1&essay_count=0`;
+                } else if (currentTab === 'tags') {
+                    const tagIds = getSelectedSubTagIds();
+                    if (tagIds.length === 0) { showError('请选择至少一个二级标签'); return; }
+                    // Upsert profile with position/level
+                    if (name) {
+                        await fetch(`${API_BASE}/recommendations/profiles/upsert`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                user_id: name,
+                                position: document.getElementById('positionInput').value.trim(),
+                                level: document.getElementById('levelInput').value.trim(),
+                            }),
+                        });
+                    }
+                    const pos = document.getElementById('positionInput').value.trim();
+                    const lvl = document.getElementById('levelInput').value.trim();
+                    url = `${API_BASE}/recommendations/by-tags?tag_ids=${tagIds.join(',')}&single_count=1&multiple_count=1&judge_count=1&essay_count=0&user_id=${encodeURIComponent(name)}&position=${encodeURIComponent(pos)}&level=${encodeURIComponent(lvl)}`;
+                }
+
+                const r = await fetch(url);
                 if (!r.ok) throw new Error(await r.text());
                 const data = await r.json();
                 const items = data.items || [];
-                if (!items.length) {
-                    errEl.textContent = '该画像下暂无可推荐题目';
-                    errEl.classList.remove('hidden');
-                    return;
-                }
+                if (items.length === 0) { showError('暂无题目，请先使用 AI 出题生成题目或更换筛选条件'); return; }
+
                 currentQuestion = items[0];
                 renderQuestion(currentQuestion);
                 currentStartAt = Date.now();
                 document.getElementById('questionSection').classList.remove('hidden');
+                document.getElementById('questionSetSection').classList.add('hidden');
                 document.getElementById('recommendSection').classList.add('hidden');
                 document.getElementById('resultMessage').classList.add('hidden');
             } catch (e) {
-                errEl.textContent = e.message || '按画像获取题目失败';
-                errEl.classList.remove('hidden');
+                showError(e.message || '获取题目失败');
+            } finally {
+                setLoading(false);
             }
         }
 
-        async function recordBehavior(isCorrect) {
-            const userId = (document.getElementById('userIdInput').value || '').trim();
-            if (!userId || !currentQuestion) return;
-            const spent = currentStartAt ? Math.max(0, Math.round((Date.now() - currentStartAt) / 1000)) : 0;
-            await fetch(`${API_BASE}/recommendations/behaviors/record`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    user_id: userId,
-                    question_type: currentQuestion.question_type,
-                    question_id: currentQuestion.question_id,
-                    is_correct: isCorrect ? 1 : 0,
-                    time_spent_sec: spent,
-                }),
-            }).catch(() => { });
+        // ─── 获取套题 ───────────────────────────────────
+        async function fetchQuestionSet() {
+            hideError();
+            setLoading(true);
+            const name = getName();
+
+            try {
+                let params = `mode=${currentTab}&name=${encodeURIComponent(name)}`;
+
+                if (currentTab === 'document') {
+                    const docId = document.getElementById('docSelect').value;
+                    if (!docId) { showError('请先选择文档'); return; }
+                    params += `&document_id=${docId}`;
+                } else if (currentTab === 'interest') {
+                    const interests = (document.getElementById('interestsInput').value || '').trim();
+                    if (!interests) { showError('请输入兴趣标签'); return; }
+                    // Upsert profile
+                    if (name) {
+                        const tags = interests.split(',').map(x => x.trim()).filter(Boolean);
+                        await fetch(`${API_BASE}/recommendations/profiles/upsert`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ user_id: name, interests: tags }),
+                        });
+                    }
+                    params += `&interests=${encodeURIComponent(interests)}`;
+                } else if (currentTab === 'tags') {
+                    const tagIds = getSelectedSubTagIds();
+                    if (tagIds.length === 0) { showError('请选择至少一个二级标签'); return; }
+                    const pos = document.getElementById('positionInput').value.trim();
+                    const lvl = document.getElementById('levelInput').value.trim();
+                    // Upsert profile
+                    if (name) {
+                        await fetch(`${API_BASE}/recommendations/profiles/upsert`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ user_id: name, position: pos, level: lvl }),
+                        });
+                    }
+                    params += `&tag_ids=${tagIds.join(',')}&position=${encodeURIComponent(pos)}&level=${encodeURIComponent(lvl)}`;
+                }
+
+                const r = await fetch(`${API_BASE}/recommendations/question-set?${params}`);
+                if (!r.ok) {
+                    const errData = await r.json().catch(() => ({}));
+                    throw new Error(errData.detail || '获取套题失败');
+                }
+                const data = await r.json();
+                if (data.total === 0) { showError('暂无匹配题目，请更换筛选条件或先使用 AI 出题'); return; }
+
+                questionSetData = data;
+                renderQuestionSet(data);
+                currentStartAt = Date.now();
+                document.getElementById('questionSection').classList.add('hidden');
+                document.getElementById('questionSetSection').classList.remove('hidden');
+                document.getElementById('recommendSection').classList.add('hidden');
+                document.getElementById('setResultMessage').classList.add('hidden');
+            } catch (e) {
+                showError(e.message || '获取套题失败');
+            } finally {
+                setLoading(false);
+            }
         }
 
+        // ─── 渲染单题 ───────────────────────────────────
         function renderQuestion(q) {
             const body = document.getElementById('questionBody');
             const area = document.getElementById('answerArea');
             body.innerHTML = '';
             area.innerHTML = '';
 
-            const typeLabel = { single: '单选题', multiple: '多选题', judge: '判断题', essay: '简答题' }[q.question_type] || q.question_type;
-            body.innerHTML = `<p class="text-sm text-gray-500 mb-2">${typeLabel} · ID: ${q.question_id}</p><p class="text-gray-800">${escapeHtml(q.question_text)}</p>`;
+            const typeLabel = TYPE_LABEL[q.question_type] || q.question_type;
+            body.innerHTML = `<p class="text-sm text-gray-500 mb-2">${typeLabel} · ID: ${q.question_id}</p><p class="text-gray-800 leading-relaxed">${escapeHtml(q.question_text)}</p>`;
 
             if (q.options) {
                 const keys = Object.keys(q.options).sort();
                 keys.forEach(k => {
                     const label = document.createElement('label');
-                    label.className = 'flex items-center gap-2 py-2 cursor-pointer';
-                    label.innerHTML = `<input type="radio" name="answer" value="${k}" class="rounded"> <span>${k}. ${escapeHtml(q.options[k] || '')}</span>`;
+                    label.className = 'flex items-center gap-2 py-2 cursor-pointer hover:bg-gray-50 px-2 rounded';
+                    label.innerHTML = `<input type="radio" name="answer" value="${k}" class="accent-blue-600"> <span>${k}. ${escapeHtml(q.options[k] || '')}</span>`;
                     area.appendChild(label);
                 });
             } else if (q.question_type === 'judge') {
                 ['1', '0'].forEach(v => {
                     const label = document.createElement('label');
-                    label.className = 'flex items-center gap-2 py-2 cursor-pointer';
-                    label.innerHTML = `<input type="radio" name="answer" value="${v}" class="rounded"> <span>${v === '1' ? '正确' : '错误'}</span>`;
+                    label.className = 'flex items-center gap-2 py-2 cursor-pointer hover:bg-gray-50 px-2 rounded';
+                    label.innerHTML = `<input type="radio" name="answer" value="${v}" class="accent-blue-600"> <span>${v === '1' ? '正确' : '错误'}</span>`;
                     area.appendChild(label);
                 });
             }
         }
 
-        function escapeHtml(s) {
-            if (s == null) return '';
-            const div = document.createElement('div');
-            div.textContent = s;
-            return div.innerHTML;
+        // ─── 渲染套题 ───────────────────────────────────
+        function renderQuestionSet(data) {
+            const body = document.getElementById('questionSetBody');
+            body.innerHTML = '';
+            document.getElementById('setCountBadge').textContent = `共 ${data.total} 题`;
+
+            let globalIdx = 0;
+            const typeOrder = ['single', 'multiple', 'judge', 'essay'];
+
+            for (const qType of typeOrder) {
+                const questions = data.groups[qType] || [];
+                if (questions.length === 0) continue;
+
+                const section = document.createElement('div');
+                section.innerHTML = `<h3 class="text-base font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                    <span class="inline-block w-1.5 h-5 bg-blue-500 rounded-full"></span>
+                    ${TYPE_LABEL[qType]}
+                    <span class="text-sm font-normal text-gray-400">(${questions.length} 题)</span>
+                </h3>`;
+
+                const cards = document.createElement('div');
+                cards.className = 'space-y-3 ml-4';
+
+                questions.forEach((q, i) => {
+                    globalIdx++;
+                    const card = document.createElement('div');
+                    card.className = 'q-card border rounded-lg p-4 bg-gray-50/50';
+                    card.id = `set-q-${qType}-${q.question_id}`;
+
+                    let optionsHtml = '';
+                    if (qType === 'single' && q.options) {
+                        const keys = Object.keys(q.options).sort();
+                        optionsHtml = keys.map(k =>
+                            `<label class="flex items-center gap-2 py-1 cursor-pointer text-sm">
+                                <input type="radio" name="set-ans-${qType}-${q.question_id}" value="${k}" class="accent-blue-600">
+                                <span>${k}. ${escapeHtml(q.options[k] || '')}</span>
+                            </label>`
+                        ).join('');
+                    } else if (qType === 'multiple' && q.options) {
+                        const keys = Object.keys(q.options).sort();
+                        optionsHtml = keys.map(k =>
+                            `<label class="flex items-center gap-2 py-1 cursor-pointer text-sm">
+                                <input type="checkbox" name="set-ans-${qType}-${q.question_id}" value="${k}" class="accent-blue-600 rounded">
+                                <span>${k}. ${escapeHtml(q.options[k] || '')}</span>
+                            </label>`
+                        ).join('');
+                    } else if (qType === 'judge') {
+                        optionsHtml = ['1', '0'].map(v =>
+                            `<label class="flex items-center gap-2 py-1 cursor-pointer text-sm">
+                                <input type="radio" name="set-ans-${qType}-${q.question_id}" value="${v}" class="accent-blue-600">
+                                <span>${v === '1' ? '正确' : '错误'}</span>
+                            </label>`
+                        ).join('');
+                    } else if (qType === 'essay') {
+                        optionsHtml = `<textarea name="set-ans-${qType}-${q.question_id}" rows="3" placeholder="请输入答案..."
+                            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"></textarea>`;
+                    }
+
+                    card.innerHTML = `
+                        <p class="text-sm text-gray-500 mb-1">第 ${globalIdx} 题 · ${TYPE_SHORT[qType]} · ID: ${q.question_id}</p>
+                        <p class="text-gray-800 text-sm leading-relaxed mb-3">${escapeHtml(q.question_text)}</p>
+                        <div class="set-options">${optionsHtml}</div>
+                        <div class="set-feedback mt-2 hidden"></div>
+                    `;
+                    cards.appendChild(card);
+                });
+
+                section.appendChild(cards);
+                body.appendChild(section);
+            }
         }
 
+        // ─── 提交全部答案 ───────────────────────────────
+        function submitAllAnswers() {
+            if (!questionSetData) return;
+            const name = getName();
+            const timeSpent = currentStartAt ? Math.max(0, Math.round((Date.now() - currentStartAt) / 1000)) : 0;
+
+            let totalScore = 0, earnedScore = 0, totalCount = 0, correctCount = 0;
+            const behaviorRecords = [];
+            const typeOrder = ['single', 'multiple', 'judge', 'essay'];
+
+            for (const qType of typeOrder) {
+                const questions = questionSetData.groups[qType] || [];
+                for (const q of questions) {
+                    totalCount++;
+                    totalScore += q.score || 0;
+                    const card = document.getElementById(`set-q-${qType}-${q.question_id}`);
+                    const feedback = card?.querySelector('.set-feedback');
+                    let isCorrect = false;
+                    let userAnswer = '';
+
+                    if (qType === 'single' || qType === 'judge') {
+                        const checked = card?.querySelector(`input[name="set-ans-${qType}-${q.question_id}"]:checked`);
+                        userAnswer = checked ? checked.value : '';
+                        isCorrect = userAnswer === String(q.correct_answer);
+                    } else if (qType === 'multiple') {
+                        const checked = Array.from(card?.querySelectorAll(`input[name="set-ans-${qType}-${q.question_id}"]:checked`) || []);
+                        userAnswer = checked.map(c => c.value).sort().join(',');
+                        const correctSorted = String(q.correct_answer).split(',').map(x => x.trim()).sort().join(',');
+                        isCorrect = userAnswer === correctSorted;
+                    } else if (qType === 'essay') {
+                        const ta = card?.querySelector(`textarea[name="set-ans-${qType}-${q.question_id}"]`);
+                        userAnswer = ta ? ta.value.trim() : '';
+                        isCorrect = userAnswer.length > 0; // 简答题只判断是否作答
+                    }
+
+                    if (isCorrect) {
+                        correctCount++;
+                        earnedScore += q.score || 0;
+                    }
+
+                    // 显示反馈
+                    if (feedback) {
+                        feedback.classList.remove('hidden');
+                        if (card) {
+                            card.classList.remove('correct-border', 'wrong-border');
+                            card.classList.add(isCorrect ? 'correct-border' : 'wrong-border');
+                        }
+                        let feedbackHtml = isCorrect
+                            ? '<span class="text-green-600 text-sm font-medium">回答正确</span>'
+                            : `<span class="text-red-600 text-sm font-medium">回答错误</span>
+                               <span class="text-sm text-gray-500 ml-2">正确答案：${escapeHtml(String(qType === 'essay' ? '见参考答案' : q.correct_answer))}</span>`;
+                        if (q.explanation) {
+                            feedbackHtml += `<p class="text-sm text-gray-600 mt-1">解析：${escapeHtml(q.explanation)}</p>`;
+                        }
+                        if (qType === 'essay' && q.reference_answer) {
+                            feedbackHtml += `<p class="text-sm text-gray-600 mt-1">参考答案：${escapeHtml(q.reference_answer)}</p>`;
+                        }
+                        feedback.innerHTML = feedbackHtml;
+                    }
+
+                    if (name) {
+                        behaviorRecords.push({
+                            question_type: qType,
+                            question_id: q.question_id,
+                            is_correct: isCorrect ? 1 : 0,
+                            time_spent_sec: Math.round(timeSpent / totalCount),
+                        });
+                    }
+                }
+            }
+
+            // 显示总分
+            const msg = document.getElementById('setResultMessage');
+            msg.classList.remove('hidden');
+            msg.innerHTML = `
+                <div class="p-4 rounded-lg ${correctCount === totalCount ? 'bg-green-50 border border-green-200' : 'bg-blue-50 border border-blue-200'}">
+                    <p class="font-semibold text-gray-800">答题完成</p>
+                    <p class="text-sm text-gray-600 mt-1">
+                        正确 ${correctCount} / ${totalCount} 题，
+                        得分 ${earnedScore} / ${totalScore} 分
+                    </p>
+                </div>
+            `;
+
+            // 批量记录行为
+            if (name && behaviorRecords.length > 0) {
+                fetch(`${API_BASE}/recommendations/behaviors/batch-record`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: name, answers: behaviorRecords }),
+                }).catch(() => {});
+            }
+        }
+
+        // ─── 单题提交 ───────────────────────────────────
         function getSelectedAnswer() {
             const radio = document.querySelector('input[name="answer"]:checked');
             return radio ? radio.value : null;
@@ -247,10 +628,10 @@
             const msg = document.getElementById('resultMessage');
             msg.classList.remove('hidden');
             if (correct) {
-                msg.innerHTML = '<span class="text-green-600">回答正确</span>';
+                msg.innerHTML = '<span class="text-green-600 font-medium">回答正确</span>';
                 recordBehavior(true);
             } else {
-                msg.innerHTML = '<span class="text-red-600">回答错误。可点击下方「推荐练习更多」获取相关题目。</span>';
+                msg.innerHTML = `<span class="text-red-600 font-medium">回答错误</span><span class="text-sm text-gray-500 ml-2">正确答案：${escapeHtml(String(currentQuestion.correct_answer))}</span>`;
                 recordBehavior(false);
                 document.getElementById('recommendSection').classList.remove('hidden');
                 loadRecommendations();
@@ -259,13 +640,32 @@
 
         document.getElementById('mockWrongBtn').addEventListener('click', () => {
             if (!currentQuestion) return;
-            document.getElementById('resultMessage').innerHTML = '<span class="text-amber-600">已模拟答错，正在加载推荐题目…</span>';
+            document.getElementById('resultMessage').innerHTML = '<span class="text-amber-600 font-medium">已模拟答错，正在加载推荐题目…</span>';
             document.getElementById('resultMessage').classList.remove('hidden');
             recordBehavior(false);
             document.getElementById('recommendSection').classList.remove('hidden');
             loadRecommendations();
         });
 
+        // ─── 行为记录 ───────────────────────────────────
+        async function recordBehavior(isCorrect) {
+            const name = getName();
+            if (!name || !currentQuestion) return;
+            const spent = currentStartAt ? Math.max(0, Math.round((Date.now() - currentStartAt) / 1000)) : 0;
+            await fetch(`${API_BASE}/recommendations/behaviors/record`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: name,
+                    question_type: currentQuestion.question_type,
+                    question_id: currentQuestion.question_id,
+                    is_correct: isCorrect ? 1 : 0,
+                    time_spent_sec: spent,
+                }),
+            }).catch(() => {});
+        }
+
+        // ─── 推荐加载 ───────────────────────────────────
         async function loadRecommendations() {
             if (!currentQuestion) return;
             const loading = document.getElementById('recommendLoading');
@@ -274,35 +674,35 @@
             list.innerHTML = '';
             try {
                 const r = await fetch(
-                    `${API_BASE}/recommendations/by-question?question_type=${currentQuestion.question_type}&question_id=${currentQuestion.question_id}&limit=10&user_id=${encodeURIComponent((document.getElementById('userIdInput').value || '').trim())}`
+                    `${API_BASE}/recommendations/by-question?question_type=${currentQuestion.question_type}&question_id=${currentQuestion.question_id}&limit=10&user_id=${encodeURIComponent(getName())}`
                 );
                 if (!r.ok) throw new Error(await r.text());
                 const data = await r.json();
                 loading.classList.add('hidden');
                 const related = data.related_questions || [];
                 if (related.length === 0) {
-                    list.innerHTML = '<p class="text-gray-500">暂无相关推荐题目（可尝试在「题目审核」页为人工作业题目生成知识点关联）</p>';
+                    list.innerHTML = '<p class="text-gray-500 text-sm">暂无相关推荐题目</p>';
                     return;
                 }
                 related.forEach((q, i) => {
                     const card = document.createElement('div');
                     card.className = 'border rounded-lg p-4 bg-gray-50';
-                    const typeLabel = { single: '单选', multiple: '多选', judge: '判断', essay: '简答' }[q.question_type] || q.question_type;
+                    const typeLabel = TYPE_SHORT[q.question_type] || q.question_type;
                     card.innerHTML = `
-                        <p class="text-sm text-gray-500 mb-1">${i + 1}. ${typeLabel} · ID: ${q.question_id} ${q.recommend_reason ? ` · ${q.recommend_reason}` : ''}</p>
-                        <p class="text-gray-800">${escapeHtml(q.question_text)}</p>
+                        <p class="text-sm text-gray-500 mb-1">${i + 1}. ${typeLabel} · ID: ${q.question_id}${q.recommend_reason ? ` · ${q.recommend_reason}` : ''}</p>
+                        <p class="text-gray-800 text-sm">${escapeHtml(q.question_text)}</p>
                     `;
                     list.appendChild(card);
                 });
             } catch (e) {
                 loading.classList.add('hidden');
-                list.innerHTML = '<p class="text-red-600">加载推荐失败: ' + escapeHtml(e.message) + '</p>';
+                list.innerHTML = '<p class="text-red-600 text-sm">加载推荐失败: ' + escapeHtml(e.message) + '</p>';
             }
         }
 
-        document.getElementById('fetchQuestionBtn').addEventListener('click', fetchOneQuestion);
-        document.getElementById('fetchByProfileBtn').addEventListener('click', fetchOneQuestionByProfile);
+        // ─── 初始化 ─────────────────────────────────────
         loadDocuments();
+        loadFatherTags();
     </script>
 </body>
 

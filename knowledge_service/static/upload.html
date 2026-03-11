@@ -20,9 +20,9 @@
                         <a href="/static/upload.html" class="text-blue-600 font-medium">上传文档</a>
                         <a href="/static/list.html" class="text-gray-600 hover:text-blue-600">文档列表</a>
                         <a href="/static/generate.html" class="text-gray-600 hover:text-blue-600">AI 出题</a>
-                        <a href="/static/practice.html" class="text-gray-600 hover:text-blue-600">模拟答题</a>
                         <a href="/static/recommend-admin.html" class="text-gray-600 hover:text-blue-600">题目审核</a>
-                        <a href="/static/tags.html" class="text-gray-600 hover:text-blue-600">标签管理</a>
+                        <a href="/static/practice.html" class="text-gray-600 hover:text-blue-600">模拟答题</a>
+                        <a href="/static/tags.html" class="text-gray-600 hover:text-blue-600" style="display:none">标签管理</a>
                         <a href="/docs" class="text-gray-600 hover:text-blue-600">API 文档</a>
                     </div>
                 </div>
@@ -76,6 +76,8 @@
                         </div>
                     </div>
 
+                    <!-- 以下字段暂时隐藏，保留 DOM 以备后续启用 -->
+                    <div class="hidden">
                     <div class="grid grid-cols-2 gap-4">
                         <!-- 组织维度 -->
                         <div>
@@ -118,6 +120,7 @@
                         <input type="text" id="uploadUser" placeholder="用户标识"
                             class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
+                    </div><!-- /hidden -->
 
                     <!-- 提交按钮 -->
                     <div class="flex items-center justify-end space-x-4">

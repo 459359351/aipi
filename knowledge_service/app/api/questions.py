@@ -147,7 +147,7 @@ def _apply_question_edits(q_type: str, obj, body: dict) -> list[str]:
 def _resolve_or_create_tag(
     db: Session,
     tag_name: str,
-    default_tag_type: str = "domain",
+    default_tag_type: str = "human",
     default_tag_enabled=None,
     father_tag: str | None = None,
 ) -> tuple[Optional[Tag], bool, str]:
@@ -160,7 +160,7 @@ def _resolve_or_create_tag(
             tag.father_tag = father_tag
         return tag, False, normalized
     enabled = 1 if default_tag_enabled is None else (1 if int(default_tag_enabled) == 1 else 0)
-    tag = Tag(tag_name=normalized, tag_type=default_tag_type or "domain", is_enabled=enabled, father_tag=father_tag)
+    tag = Tag(tag_name=normalized, tag_type=default_tag_type or "human", is_enabled=enabled, father_tag=father_tag)
     db.add(tag)
     db.flush()
     # 新建标签时同步更新一级标签的 sub_tag_count（支持逗号分隔多父标签）
@@ -425,7 +425,7 @@ async def resolve_single_tag(
 ):
     t0 = time.time()
     tag_name = body.get("tag_name")
-    default_tag_type = body.get("default_tag_type") or "domain"
+    default_tag_type = body.get("default_tag_type") or "human"
     default_tag_enabled = body.get("default_tag_enabled")
     if not str(tag_name or "").strip():
         raise HTTPException(status_code=400, detail="tag_name 不能为空")
@@ -499,6 +499,7 @@ async def get_question_detail(
     return {
         "question_type": q_type,
         "id": int(obj.id),
+        "document_id": getattr(obj, "document_id", None),
         "question_text": payload.get("question_text"),
         "options": options,
         "correct_answer": payload.get("correct_answer"),
@@ -559,8 +560,8 @@ async def set_question_tags(
     """
     body 支持两种方式：
     - { "tag_ids": [1,2,3] }
-    - { "tag_names": ["组织建设", "流程"], "default_tag_type": "domain" }
-    手工设置行为视为“已确认关联”，会写入 is_confirmed=1。
+    - { “tag_names”: [“组织建设”, “流程”], “default_tag_type”: “human” }
+    手工设置行为视为”已确认关联”，会写入 is_confirmed=1。
     """
     q_type = question_type.strip().lower()
     if q_type not in ("single", "multiple", "judge", "essay"):
@@ -591,14 +592,14 @@ async def set_question_tags(
                 continue
             norm_seen.add(key)
             normalized_names_count += 1
-            # 人工新增标签默认可用；若显式 candidate 或指定 default_tag_enabled=0，则按候选处理
+            # 人工新增标签默认可用；若 tag_type=ai 或指定 default_tag_enabled=0，则按候选处理
             enabled = default_tag_enabled
-            if enabled is None and (default_tag_type or "") == "candidate":
+            if enabled is None and (default_tag_type or "") == "ai":
                 enabled = 0
             tag, created, _ = _resolve_or_create_tag(
                 db=db,
                 tag_name=normalized,
-                default_tag_type=default_tag_type or "candidate",
+                default_tag_type=default_tag_type or "ai",
                 default_tag_enabled=enabled,
             )
             if created:
@@ -746,8 +747,11 @@ async def audit_submit_question(
     remark = body.get("remark")
 
     tag_ids = body.get("tag_ids") or []
+    ai_tag_names = body.get("ai_tag_names") or []
+    human_tag_names = body.get("human_tag_names") or []
+    # 兼容旧格式：如果没有分开传，则全部走 default_tag_type
     tag_names = body.get("tag_names") or []
-    default_tag_type = body.get("default_tag_type") or "domain"
+    default_tag_type = body.get("default_tag_type") or "human"
     default_tag_enabled = body.get("default_tag_enabled")
     father_tag = body.get("father_tag") or None
 
@@ -760,8 +764,20 @@ async def audit_submit_question(
         except Exception:
             continue
 
-    norm_seen = set()
+    # 按来源分别处理：AI 推荐的 tag_type='ai'，人工添加的 tag_type='human'
+    typed_names: list[tuple[str, str]] = []
+    for name in ai_tag_names:
+        typed_names.append((name, "ai"))
+    for name in human_tag_names:
+        typed_names.append((name, "human"))
+    # 兼容旧格式（未分开传的 tag_names 走 default_tag_type）
+    seen_in_typed = set(n.strip().lower() for n, _ in typed_names)
     for name in tag_names:
+        if name.strip().lower() not in seen_in_typed:
+            typed_names.append((name, default_tag_type))
+
+    norm_seen = set()
+    for name, tag_type_for_new in typed_names:
         normalized = _normalize_tag_name(name)
         key = _norm_key(normalized)
         if not normalized or key in norm_seen:
@@ -770,7 +786,7 @@ async def audit_submit_question(
         tag, created, _ = _resolve_or_create_tag(
             db=db,
             tag_name=normalized,
-            default_tag_type=default_tag_type,
+            default_tag_type=tag_type_for_new,
             default_tag_enabled=default_tag_enabled,
             father_tag=father_tag,
         )
@@ -778,7 +794,32 @@ async def audit_submit_question(
             created_count += 1
         else:
             existing_hit_count += 1
+            # 已有标签也更新 tag_type 为本次来源
+            if tag and tag.tag_type != tag_type_for_new:
+                tag.tag_type = tag_type_for_new
         resolved_ids.add(int(tag.id))
+
+    # 审核通过的标签：确保 is_enabled=1，绑定 father_tag，更新 father_tags 表
+    if resolved_ids and father_tag:
+        tags_to_update = db.query(Tag).filter(Tag.id.in_(list(resolved_ids))).all()
+        for tag in tags_to_update:
+            tag.is_enabled = 1
+            old_fathers = set(f.strip() for f in (tag.father_tag or "").split(",") if f.strip())
+            new_fathers = set(f.strip() for f in father_tag.split(",") if f.strip())
+            if not new_fathers.issubset(old_fathers):
+                merged = old_fathers | new_fathers
+                tag.father_tag = ",".join(sorted(merged))
+                # 更新 father_tags 表的 sub_tag_count
+                added_fathers = new_fathers - old_fathers
+                for ft_name in added_fathers:
+                    ft = db.query(FatherTag).filter(FatherTag.tag_name == ft_name).first()
+                    if ft:
+                        ft.sub_tag_count = (ft.sub_tag_count or 0) + 1
+    elif resolved_ids:
+        # 没有 father_tag 也要确保 is_enabled=1
+        db.query(Tag).filter(Tag.id.in_(list(resolved_ids))).update(
+            {Tag.is_enabled: 1}, synchronize_session=False
+        )
 
     db.execute(
         delete(question_tag_rel).where(

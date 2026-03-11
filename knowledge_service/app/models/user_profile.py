@@ -13,6 +13,7 @@ class UserProfile(Base):
     user_id = Column(String(64), nullable=False, unique=True, index=True, comment="用户ID")
     department = Column(String(128), nullable=True, index=True, comment="部门")
     position = Column(String(128), nullable=True, index=True, comment="岗位")
+    level = Column(String(64), nullable=True, comment="级别")
     interests = Column(Text, nullable=True, comment="兴趣标签(JSON数组)")
     created_at = Column(DateTime, nullable=False, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now(), comment="更新时间")

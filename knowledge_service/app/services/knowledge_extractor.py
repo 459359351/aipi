@@ -310,6 +310,8 @@ def extract_tags_from_qa_direct(qa_text: str, max_tags: int = 5) -> List[str]:
     response = MultiModalConversation.call(
         model=settings.LLM_MODEL,
         messages=messages,
+        max_tokens=256,
+        enable_thinking=False,
     )
     elapsed = time.time() - t0
     logger.info(f"[LLM][QA_TAG] 响应完成，耗时 {elapsed:.1f}s，status={response.status_code}")
