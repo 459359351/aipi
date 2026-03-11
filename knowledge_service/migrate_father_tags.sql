@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS father_tags (
 
 -- Step 2: tags 表新增 father_tag 列
 ALTER TABLE tags
-ADD COLUMN IF NOT EXISTS father_tag VARCHAR(128) NULL COMMENT '对应的一级标签名（多个用逗号分隔）' AFTER tag_type;
+ADD COLUMN father_tag VARCHAR(128) NULL COMMENT '对应的一级标签名（多个用逗号分隔）' AFTER tag_type;
 
 -- Step 3: 插入一级标签种子数据
 INSERT INTO
@@ -238,6 +238,10 @@ WHERE
         '企业文化',
         '宣传工作'
     );
+
+-- Step 6: 统一 tag_type 字段：is_enabled=1 的置为 human，其余置为 ai
+UPDATE tags SET tag_type = 'human' WHERE is_enabled = 1;
+UPDATE tags SET tag_type = 'ai' WHERE is_enabled != 1 OR is_enabled IS NULL;
 
 SELECT '迁移完成' AS result;
 

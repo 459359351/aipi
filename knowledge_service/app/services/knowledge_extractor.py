@@ -24,22 +24,6 @@ dashscope.api_key = settings.DASHSCOPE_API_KEY
 dashscope.base_http_api_url = "https://dashscope.aliyuncs.com/api/v1"
 
 
-def _agent_debug_log(location: str, message: str, data: dict, hypothesis_id: str):
-    try:
-        with open("/Users/zhangjingjun/Downloads/zhijia/AIPI/.cursor/debug-abf3c5.log", "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "sessionId": "abf3c5",
-                "runId": "ai_tag_perf",
-                "hypothesisId": hypothesis_id,
-                "location": location,
-                "message": message,
-                "data": data,
-                "timestamp": int(time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-
-
 # ── 结构化 Prompt ─────────────────────────────────────────
 
 EXTRACTION_PROMPT_TEMPLATE = """你是一个企业党建知识抽取专家，服务于企业内部考试系统的题库建设。你的任务是从党建相关文档（规章制度、管理办法、红头文件、学习材料、会议精神、政策法规等）中，抽取出可用于出题的独立知识点。
@@ -314,14 +298,6 @@ def extract_tags_from_qa_direct(qa_text: str, max_tags: int = 5) -> List[str]:
         return []
     max_tags = max(1, min(int(max_tags or 5), 10))
     total_t0 = time.time()
-    # #region agent log
-    _agent_debug_log(
-        "knowledge_extractor.py:extract_tags_from_qa_direct:entry",
-        "direct tag extract entry",
-        {"qa_len": len(qa_text), "max_tags": max_tags},
-        "H1",
-    )
-    # #endregion
 
     prompt = QA_TAGS_PROMPT_TEMPLATE.format(qa_text=qa_text)
     messages = [
@@ -334,16 +310,10 @@ def extract_tags_from_qa_direct(qa_text: str, max_tags: int = 5) -> List[str]:
     response = MultiModalConversation.call(
         model=settings.LLM_MODEL,
         messages=messages,
+        max_tokens=256,
+        enable_thinking=False,
     )
     elapsed = time.time() - t0
-    # #region agent log
-    _agent_debug_log(
-        "knowledge_extractor.py:extract_tags_from_qa_direct:llm_done",
-        "llm call finished",
-        {"status_code": int(response.status_code), "llm_elapsed_ms": int(elapsed * 1000)},
-        "H2",
-    )
-    # #endregion
     logger.info(f"[LLM][QA_TAG] 响应完成，耗时 {elapsed:.1f}s，status={response.status_code}")
 
     if response.status_code != HTTPStatus.OK:
@@ -380,19 +350,6 @@ def extract_tags_from_qa_direct(qa_text: str, max_tags: int = 5) -> List[str]:
         out.append(name)
         if len(out) >= max_tags:
             break
-    # #region agent log
-    _agent_debug_log(
-        "knowledge_extractor.py:extract_tags_from_qa_direct:exit",
-        "direct tag extract exit",
-        {
-            "raw_tags_count": len(tags),
-            "output_tags_count": len(out),
-            "parse_elapsed_ms": int((time.time() - parse_t0) * 1000),
-            "total_elapsed_ms": int((time.time() - total_t0) * 1000),
-        },
-        "H3",
-    )
-    # #endregion
     return out
 
 

@@ -38,3 +38,19 @@ class ByQuestionRecommendationResponse(BaseModel):
     knowledge_ids: List[int] = Field(default_factory=list)
     related_questions: List[RecommendationQuestionItem]
 
+
+class QuestionSetResponse(BaseModel):
+    mode: str = Field(..., description="出题模式：document/interest/tags")
+    total: int = Field(0, description="总题数")
+    counts: Dict[str, int] = Field(default_factory=dict, description="各题型数量")
+    groups: Dict[str, List[RecommendationQuestionItem]] = Field(
+        default_factory=dict, description="按题型分组的题目"
+    )
+
+
+class ByTagsRecommendationResponse(BaseModel):
+    tag_ids: List[int] = Field(default_factory=list)
+    requested: Dict[str, int] = Field(default_factory=dict)
+    summary: Dict[str, int] = Field(default_factory=dict)
+    items: List[RecommendationQuestionItem] = Field(default_factory=list)
+

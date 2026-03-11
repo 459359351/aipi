@@ -64,7 +64,7 @@ def process_document_task(document_id: int, object_key: str, file_format: str) -
         for t in tags:
             if int(getattr(t, "is_enabled", 0) or 0) != 1:
                 continue
-            if not t.tag_type or t.tag_type == "candidate":
+            if not t.tag_type or t.tag_type == "ai":
                 continue
             preset_tags.setdefault(t.tag_type, []).append(t.tag_name)
 

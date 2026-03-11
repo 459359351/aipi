@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>推荐管理 - 知识处理服务</title>
+    <title>题目审核 - 知识处理服务</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
@@ -12,22 +12,22 @@
     <nav class="bg-white shadow-sm border-b">
         <div class="max-w-6xl mx-auto px-4 py-3">
             <div class="flex items-center justify-between">
-                <h1 class="text-xl font-semibold text-gray-800">推荐管理</h1>
+                <h1 class="text-xl font-semibold text-gray-800">AI 知识处理服务</h1>
                 <div class="space-x-4 text-sm">
                     <a href="/static/index.html" class="text-gray-700 hover:text-blue-600">首页</a>
                     <a href="/static/upload.html" class="text-gray-700 hover:text-blue-600">上传文档</a>
                     <a href="/static/list.html" class="text-gray-700 hover:text-blue-600">文档列表</a>
                     <a href="/static/generate.html" class="text-gray-700 hover:text-blue-600">AI 出题</a>
+                    <a href="/static/recommend-admin.html" class="text-blue-600 font-medium">题目审核</a>
                     <a href="/static/practice.html" class="text-gray-700 hover:text-blue-600">模拟答题</a>
-                    <a href="/static/recommend-admin.html" class="text-blue-600 font-medium">推荐管理</a>
-                    <a href="/static/tags.html" class="text-gray-700 hover:text-blue-600">标签管理</a>
+                    <a href="/static/tags.html" class="text-gray-700 hover:text-blue-600" style="display:none">标签管理</a>
                     <a href="/docs" class="text-gray-700 hover:text-blue-600">API 文档</a>
                 </div>
             </div>
         </div>
     </nav>
 
-    <div class="max-w-3xl mx-auto px-4 py-8">
+    <div class="max-w-7xl mx-auto px-4 py-8">
         <div class="bg-white rounded-lg shadow-md p-6 mb-6 hidden">
             <h2 class="text-lg font-semibold text-gray-800 mb-2">人工题目 · 知识点关联</h2>
             <p class="text-sm text-gray-600 mb-4">
@@ -35,8 +35,7 @@
                 点击下方按钮后，系统会调用 LLM 结合题干与答案/解析提炼 1~3 个知识点，写入
                 <code class="bg-gray-100 px-1 rounded">knowledge_points</code>，并建立
                 <code class="bg-gray-100 px-1 rounded">question_knowledge_rel</code> 关联，便于「按错题推荐」时也能召回相关人工题。
-                同时，标签将优先匹配预设标签；无法匹配的会作为候选标签写入 <code class="bg-gray-100 px-1 rounded">tags(tag_type=candidate)</code>
-                供人工审核。
+                同时，标签将优先匹配预设标签；无法匹配的会作为 AI 候选标签写入，供人工审核。
             </p>
             <button type="button" id="buildRelBtn"
                 class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
@@ -46,16 +45,16 @@
         </div>
 
         <div class="bg-white rounded-lg shadow-md p-6">
-            <h2 class="text-lg font-semibold text-gray-800 mb-2">题目标签审核</h2>
+            <h2 class="text-lg font-semibold text-gray-800 mb-2">题目审核</h2>
             <p class="text-sm text-gray-600 mb-4">
-                AI 自动继承到题目的标签默认是未确认状态（<code class="bg-gray-100 px-1 rounded">is_confirmed=0</code>），请在此确认。
+                AI 自动继承到题目的标签默认是未确认状态，请在此确认。
             </p>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                 <select id="qType" class="px-3 py-2 border border-gray-300 rounded-md">
-                    <option value="single">single</option>
-                    <option value="multiple">multiple</option>
-                    <option value="judge">judge</option>
-                    <option value="essay">essay</option>
+                    <option value="single">单选题</option>
+                    <option value="multiple">多选题</option>
+                    <option value="judge">判断题</option>
+                    <option value="essay">简答题</option>
                 </select>
                 <input id="qKeyword" type="text" placeholder="题干关键字（可选）"
                     class="px-3 py-2 border border-gray-300 rounded-md">
@@ -64,35 +63,57 @@
             </div>
             <div id="tagAuditMsg" class="hidden mb-3 px-3 py-2 rounded text-sm"></div>
             <input id="qId" type="hidden">
-            <div id="pendingList" class="space-y-2 mb-4"></div>
+            <div id="pendingList" class="space-y-2 mb-2"></div>
+            <div id="pendingPagination" class="flex items-center justify-center gap-1 mb-4"></div>
             <div id="currentQuestionBanner"
                 class="hidden mb-3 px-3 py-2 rounded border text-sm bg-blue-50 text-blue-700 border-blue-200"></div>
-            <div id="tagList" class="space-y-2 mb-3"></div>
 
-            <hr class="my-6">
-            <h3 class="text-base font-semibold text-gray-800 mb-2">AI 标签推荐与人工补充</h3>
-            <div class="flex flex-wrap gap-2 mb-3">
-                <button type="button" id="aiSuggestBtn"
-                    class="px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">AI 推荐标签</button>
-                <input id="manualTagNames" type="text" placeholder="手工添加单个标签，如：组织建设"
-                    class="flex-1 min-w-[220px] px-3 py-2 border border-gray-300 rounded-md">
-                <button type="button" id="saveManualTagsBtn"
-                    class="px-3 py-2 bg-gray-800 text-white rounded-md hover:bg-black">添加并保存标签</button>
+        </div>
+
+        <!-- Two-column layout: left=tags+edit, right=doc preview -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-base font-semibold text-gray-800 mb-3">AI 标签推荐与人工补充</h3>
+            <!-- Row 1: 一级标签 -->
+            <div class="mb-3">
+                <label class="block text-xs font-medium text-gray-500 mb-1">一级标签</label>
+                <select id="fatherTagSelect"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                    <option value="">加载中...</option>
+                </select>
             </div>
-            <div class="flex flex-wrap gap-2 mb-3">
-                <input id="tagSearchKeyword" type="text" placeholder="搜索已存在可用标签关键字"
-                    class="flex-1 min-w-[220px] px-3 py-2 border border-gray-300 rounded-md">
-                <button type="button" id="searchTagsBtn"
-                    class="px-3 py-2 bg-gray-100 rounded-md hover:bg-gray-200">搜索标签</button>
+            <!-- Row 2: AI 推荐标签 -->
+            <div class="mb-3">
+                <div class="flex items-center gap-2 mb-1.5">
+                    <button type="button" id="aiSuggestBtn"
+                        class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">AI 推荐标签</button>
+                    <span class="text-xs text-gray-400">推荐标签（点击加入）</span>
+                </div>
+                <div id="suggestTagList" class="min-h-[28px]"></div>
             </div>
-            <div id="tagSearchList" class="space-y-2 mb-3"></div>
-            <div id="suggestTagList" class="space-y-2"></div>
-            <div class="flex gap-2 mt-3">
-                <button type="button" id="confirmBtn"
-                    class="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700">确认选中关联</button>
-                <button type="button" id="unconfirmBtn"
-                    class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700">取消选中确认</button>
+            <!-- Row 3: 搜索标签 -->
+            <div class="mb-2">
+                <label class="block text-xs font-medium text-gray-500 mb-1">搜索已有标签</label>
+                <div class="flex gap-2">
+                    <input id="tagSearchKeyword" type="text" placeholder="输入标签关键字"
+                        class="flex-1 min-w-[180px] px-3 py-1.5 text-sm border border-gray-300 rounded-md">
+                    <button type="button" id="searchTagsBtn"
+                        class="px-3 py-1.5 text-sm bg-gray-100 rounded-md hover:bg-gray-200">搜索</button>
+                </div>
             </div>
+            <div id="tagSearchList" class="space-y-1.5 mb-3"></div>
+            <!-- Row 4: 手工添加 -->
+            <div class="mb-3">
+                <label class="block text-xs font-medium text-gray-500 mb-1">手工添加标签</label>
+                <div class="flex gap-2">
+                    <input id="manualTagNames" type="text" placeholder="输入标签名，如：组织建设"
+                        class="flex-1 min-w-[180px] px-3 py-1.5 text-sm border border-gray-300 rounded-md">
+                    <button type="button" id="saveManualTagsBtn"
+                        class="px-3 py-1.5 text-sm bg-gray-800 text-white rounded-md hover:bg-black whitespace-nowrap">添加并保存</button>
+                </div>
+            </div>
+            <!-- Row 5: 待提交标签池 -->
+            <div id="pendingTagPool" class="bg-emerald-50/60 border border-emerald-200 rounded-lg p-3"></div>
 
             <hr class="my-6">
             <h3 class="text-base font-semibold text-gray-800 mb-2">题目内容编辑（一步审核生效）</h3>
@@ -122,31 +143,41 @@
                 <button type="button" id="saveQuestionBtn"
                     class="px-4 py-2 bg-emerald-700 text-white rounded-md hover:bg-emerald-800">审核提交通过</button>
             </div>
+            </div>
+            <!-- Right column: document preview -->
+            <div class="bg-white rounded-lg shadow-md p-6 lg:sticky lg:top-8 self-start">
+                <h3 class="text-base font-semibold text-gray-800 mb-3">文档原文预览</h3>
+                <div id="docPreviewPanel">
+                    <div id="docPreviewPlaceholder" class="text-sm text-gray-400 text-center py-20 border-2 border-dashed border-gray-200 rounded-lg">
+                        请先选择一道题目
+                    </div>
+                    <iframe id="docPreviewIframe" class="hidden w-full rounded-lg border border-gray-200" style="min-height: 600px;"></iframe>
+                </div>
+            </div>
         </div>
     </div>
 
     <script>
         const API_BASE = '/api/v1';
-        const tagListEl = document.getElementById('tagList');
         const tagAuditMsg = document.getElementById('tagAuditMsg');
         const pendingListEl = document.getElementById('pendingList');
+        const pendingPaginationEl = document.getElementById('pendingPagination');
         const currentQuestionBannerEl = document.getElementById('currentQuestionBanner');
         const suggestTagListEl = document.getElementById('suggestTagList');
+        const pendingTagPoolEl = document.getElementById('pendingTagPool');
         const tagSearchListEl = document.getElementById('tagSearchList');
         const aiSuggestBtn = document.getElementById('aiSuggestBtn');
         const searchTagsBtn = document.getElementById('searchTagsBtn');
         const saveManualTagsBtn = document.getElementById('saveManualTagsBtn');
 
-        function debugPerfLog(location, message, data, hypothesisId = 'H0') {
-            // #region agent log
-            fetch('http://127.0.0.1:7480/ingest/f6d85069-68f7-41b5-af08-81428990ce7b', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'abf3c5' }, body: JSON.stringify({ sessionId: 'abf3c5', runId: 'ai_tag_perf', hypothesisId, location, message, data, timestamp: Date.now() }) }).catch(() => { });
-            // #endregion
-        }
 
         const state = {
             currentQuestionId: 0,
-            existingTags: [],
-            pendingTagNames: new Set(),
+            currentDocumentId: null,
+            pendingItems: [],
+            pendingPage: 1,
+            pendingPageSize: 10,
+            pendingTagNames: new Map(), // name → 'ai' | 'human'
             aiSuggestedTags: [],
             aiCandidateTags: [],
             loading: {
@@ -186,12 +217,10 @@
             currentQuestionBannerEl.textContent = `当前审核题目 ID: ${state.currentQuestionId}`;
         }
 
-        function addPendingTagName(name) {
+        function addPendingTagName(name, source = 'human') {
             const normalized = normalizeTagName(name);
             if (!normalized) return;
-            const existing = state.existingTags.find(t => normalizeTagName(t.tag_name).toLowerCase() === normalized.toLowerCase());
-            if (existing) return;
-            state.pendingTagNames.add(normalized);
+            state.pendingTagNames.set(normalized, source);
             renderSuggestTags();
         }
 
@@ -202,83 +231,42 @@
             btn.textContent = isLoading ? loadingText : btn.dataset.originText;
         }
 
-        function addExistingTagToPool(tag) {
-            const tagId = Number(tag.id);
-            const existing = state.existingTags.find(t => Number(t.id) === tagId);
-            if (existing) {
-                existing.selected = true;
-                existing.tag_name = tag.tag_name || existing.tag_name;
-                existing.tag_type = tag.tag_type || existing.tag_type;
-                renderTagList();
-                return false;
-            }
-            state.existingTags.push({
-                id: tagId,
-                tag_name: tag.tag_name || '',
-                tag_type: tag.tag_type || '',
-                tag_is_enabled: Number(tag.is_enabled ?? tag.tag_is_enabled ?? 1),
-                is_confirmed: Number(tag.is_confirmed ?? 0),
-                selected: true,
-            });
-            renderTagList();
-            return true;
-        }
-
-        function renderTagList() {
-            tagListEl.innerHTML = '';
-
-            for (const t of state.existingTags) {
-                const row = document.createElement('div');
-                row.className = 'flex items-center justify-between gap-3 border rounded px-3 py-2';
-                row.innerHTML = `
-                    <label class="flex items-center gap-2 text-sm text-gray-800">
-                        <input type="checkbox" class="tag-check" ${t.selected ? 'checked' : ''} data-tag-id="${t.id}">
-                        <span>${t.tag_name} <span class="text-gray-500">(${t.tag_type || '未分类'})</span></span>
-                    </label>
-                    <div class="flex items-center gap-2">
-                        <span class="text-xs ${t.is_confirmed === 1 ? 'text-emerald-700' : 'text-amber-700'}">
-                            ${t.is_confirmed === 1 ? '已确认' : '待确认'} / ${t.tag_is_enabled === 1 ? '标签可用' : '标签待启用'}
-                        </span>
-                        <button type="button" class="remove-existing-tag text-xs px-2 py-1 rounded bg-red-50 text-red-700 border border-red-200" data-tag-id="${t.id}">移除</button>
-                    </div>
-                `;
-                tagListEl.appendChild(row);
-            }
-
-            if (!state.existingTags.length) {
-                tagListEl.innerHTML = '<div class="text-sm text-gray-500">当前无已关联标签，可在下方 AI/搜索/手工添加后提交。</div>';
-            }
-        }
 
         async function loadPendingQuestions() {
             const qType = document.getElementById('qType').value;
             const keyword = document.getElementById('qKeyword').value.trim();
-            const url = `${API_BASE}/questions/audit/pending?question_type=${encodeURIComponent(qType)}&limit=50` + (keyword ? `&keyword=${encodeURIComponent(keyword)}` : '');
+            const url = `${API_BASE}/questions/audit/pending?question_type=${encodeURIComponent(qType)}&limit=200` + (keyword ? `&keyword=${encodeURIComponent(keyword)}` : '');
             const r = await fetch(url);
             const data = await r.json().catch(() => ({}));
             if (!r.ok) {
                 setAuditMsg(data.detail || '加载未审核题目失败', 'error');
                 return;
             }
-            const items = data.items || [];
-            pendingListEl.innerHTML = '';
-            if (!items.length) {
+            state.pendingItems = data.items || [];
+            state.pendingPage = 1;
+            if (!state.pendingItems.length) {
                 pendingListEl.innerHTML = '<div class="text-sm text-gray-500 border rounded px-3 py-2">当前题型暂无未审核题目。</div>';
+                pendingPaginationEl.innerHTML = '';
                 return;
             }
-            for (const item of items) {
+            renderPendingPage();
+            setAuditMsg(`已加载 ${state.pendingItems.length} 道未审核题目`, 'success');
+        }
+
+        function renderPendingPage() {
+            const { pendingItems, pendingPage, pendingPageSize } = state;
+            const totalPages = Math.ceil(pendingItems.length / pendingPageSize);
+            const start = (pendingPage - 1) * pendingPageSize;
+            const pageItems = pendingItems.slice(start, start + pendingPageSize);
+
+            pendingListEl.innerHTML = '';
+            for (const item of pageItems) {
                 const row = document.createElement('div');
                 row.className = 'border rounded p-3';
                 row.innerHTML = `
                     <div class="flex items-center justify-between gap-3">
                         <div class="text-sm text-gray-800">
                             <div class="font-medium">#${item.id} ${item.question_text_summary || ''}</div>
-                            <div class="text-xs text-gray-500 mt-1">
-                                review_status=${item.review_status}，
-                                待确认标签=${item.unconfirmed_tag_count || 0}，
-                                已确认标签=${item.confirmed_tag_count || 0}，
-                                audit_status=${item.audit_status || 'pending'}
-                            </div>
                         </div>
                         <button type="button" class="audit-one-btn px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:bg-blue-700" data-id="${item.id}">
                             审核
@@ -287,24 +275,25 @@
                 `;
                 pendingListEl.appendChild(row);
             }
-            setAuditMsg(`已加载 ${items.length} 道未审核题目`, 'success');
+
+            // Pagination controls
+            if (totalPages <= 1) { pendingPaginationEl.innerHTML = ''; return; }
+            let html = `<button class="pend-page-btn px-2.5 py-1 text-xs rounded border ${pendingPage <= 1 ? 'text-gray-300 border-gray-200 cursor-not-allowed' : 'text-gray-600 border-gray-300 hover:bg-gray-100'}" data-page="${pendingPage - 1}" ${pendingPage <= 1 ? 'disabled' : ''}>上一页</button>`;
+            const maxVisible = 5;
+            let startPage = Math.max(1, pendingPage - Math.floor(maxVisible / 2));
+            let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+            if (endPage - startPage < maxVisible - 1) startPage = Math.max(1, endPage - maxVisible + 1);
+            if (startPage > 1) html += `<button class="pend-page-btn px-2.5 py-1 text-xs rounded border border-gray-300 text-gray-600 hover:bg-gray-100" data-page="1">1</button><span class="text-gray-400 text-xs px-1">...</span>`;
+            for (let i = startPage; i <= endPage; i++) {
+                const active = i === pendingPage;
+                html += `<button class="pend-page-btn px-2.5 py-1 text-xs rounded border ${active ? 'bg-blue-600 text-white border-blue-600' : 'text-gray-600 border-gray-300 hover:bg-gray-100'}" data-page="${i}">${i}</button>`;
+            }
+            if (endPage < totalPages) html += `<span class="text-gray-400 text-xs px-1">...</span><button class="pend-page-btn px-2.5 py-1 text-xs rounded border border-gray-300 text-gray-600 hover:bg-gray-100" data-page="${totalPages}">${totalPages}</button>`;
+            html += `<button class="pend-page-btn px-2.5 py-1 text-xs rounded border ${pendingPage >= totalPages ? 'text-gray-300 border-gray-200 cursor-not-allowed' : 'text-gray-600 border-gray-300 hover:bg-gray-100'}" data-page="${pendingPage + 1}" ${pendingPage >= totalPages ? 'disabled' : ''}>下一页</button>`;
+            html += `<span class="text-xs text-gray-400 ml-2">${pendingItems.length} 题</span>`;
+            pendingPaginationEl.innerHTML = html;
         }
 
-        async function loadQuestionTags() {
-            const { qType, qId } = getCurrentQTypeAndId();
-            if (!qId || qId <= 0) {
-                setAuditMsg('请先在未审核列表中选择题目', 'error');
-                return;
-            }
-            const r = await fetch(`${API_BASE}/questions/${qType}/${qId}/tags`);
-            const data = await r.json().catch(() => ({}));
-            if (!r.ok) {
-                setAuditMsg(data.detail || '加载题目标签失败', 'error');
-                return;
-            }
-            state.existingTags = (data.tags || []).map(t => ({ ...t, selected: true }));
-            renderTagList();
-        }
 
         async function loadQuestionDetail() {
             const { qType, qId } = getCurrentQTypeAndId();
@@ -325,65 +314,57 @@
             document.getElementById('editOptionC').value = data.options?.C || '';
             document.getElementById('editOptionD').value = data.options?.D || '';
             document.getElementById('editOptionE').value = data.options?.E || '';
+            state.currentDocumentId = data.document_id || null;
+            loadDocPreview(state.currentDocumentId);
         }
 
-        function collectSelectedTagIds() {
-            const idSet = new Set();
-            for (const t of state.existingTags) {
-                if (t.selected) idSet.add(Number(t.id));
-            }
-            return [...idSet];
-        }
-
-        async function updateConfirm(confirmed) {
-            const { qType, qId } = getCurrentQTypeAndId();
-            const ids = collectSelectedTagIds();
-            if (!qId || qId <= 0) {
-                setAuditMsg('请先在未审核列表中选择题目', 'error');
+        function loadDocPreview(documentId) {
+            const placeholder = document.getElementById('docPreviewPlaceholder');
+            const iframe = document.getElementById('docPreviewIframe');
+            if (!placeholder || !iframe) return;
+            if (!documentId) {
+                placeholder.textContent = state.currentQuestionId ? '该题目无关联文档（人工导入题目）' : '请先选择一道题目';
+                placeholder.classList.remove('hidden');
+                iframe.classList.add('hidden');
+                iframe.src = '';
                 return;
             }
-            if (!ids.length) {
-                setAuditMsg('请先勾选要处理的标签', 'error');
-                return;
-            }
-            const r = await fetch(`${API_BASE}/questions/${qType}/${qId}/tags/confirm`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tag_ids: ids, confirmed }),
-            });
-            const data = await r.json().catch(() => ({}));
-            if (!r.ok) {
-                setAuditMsg(data.detail || '更新失败', 'error');
-                return;
-            }
-            setAuditMsg(`已更新 ${data.updated ?? 0} 条关联`, 'success');
-            await loadQuestionTags();
+            placeholder.textContent = '文档加载中...';
+            placeholder.classList.remove('hidden');
+            iframe.classList.add('hidden');
+            iframe.src = `${API_BASE}/documents/${documentId}/render-html`;
+            iframe.onload = () => {
+                placeholder.classList.add('hidden');
+                iframe.classList.remove('hidden');
+            };
+            iframe.onerror = () => {
+                placeholder.textContent = '文档加载失败';
+            };
         }
 
         function renderSuggestTags() {
             const suggested = state.aiSuggestedTags || [];
-            const candidates = state.aiCandidateTags || [];
-            const pending = [...state.pendingTagNames];
-            const sugHtml = suggested.length
-                ? suggested.map(name => `<button type="button" class="add-ai-tag-btn text-xs px-2 py-1 rounded border border-blue-300 text-blue-700 bg-blue-50 mr-2 mb-2" data-tag-name="${name}">+ ${name}</button>`).join('')
-                : '<span class="text-gray-500 text-sm">无</span>';
-            const candHtml = candidates.length
-                ? candidates.map(name => `<button type="button" class="add-ai-tag-btn text-xs px-2 py-1 rounded border border-amber-300 text-amber-700 bg-amber-50 mr-2 mb-2" data-tag-name="${name}">+ ${name}</button>`).join('')
-                : '<span class="text-gray-500 text-sm">无</span>';
-            const pendingHtml = pending.length
-                ? pending.map(name => `<button type="button" class="remove-suggest-tag text-xs px-2 py-1 rounded border border-red-300 text-red-700 bg-red-50 mr-2 mb-2" data-tag-name="${name}">删除 ${name}</button>`).join('')
-                : '<span class="text-gray-500 text-sm">无</span>';
-            suggestTagListEl.innerHTML = `
-                <div class="text-sm text-gray-700 mb-1">推荐标签（点击加入）：</div>
-                <div>${sugHtml}</div>
-                <div class="text-sm text-amber-700 mt-3 mb-1">候选新标签（点击加入）：</div>
-                <div>${candHtml}</div>
-                <div class="text-sm text-emerald-700 mt-3 mb-1">待提交标签池（点击删除）：</div>
-                <div>${pendingHtml}</div>
+            if (suggested.length) {
+                suggestTagListEl.innerHTML = `<div class="flex flex-wrap">${suggested.map(name => `<button type="button" class="add-ai-tag-btn text-xs px-2 py-1 rounded border border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 mr-1.5 mb-1.5" data-tag-name="${name}">+ ${name}</button>`).join('')}</div>`;
+            } else {
+                suggestTagListEl.innerHTML = '';
+            }
+
+            const pendingEntries = [...state.pendingTagNames.entries()];
+            const count = pendingEntries.length;
+            const pendingHtml = count
+                ? pendingEntries.map(([name, source]) => {
+                    const sourceLabel = source === 'ai' ? 'AI' : '人工';
+                    return `<button type="button" class="remove-suggest-tag text-xs px-2 py-1 rounded border border-emerald-300 text-emerald-800 bg-white hover:bg-red-50 hover:border-red-300 hover:text-red-700 mr-1.5 mb-1.5 inline-flex items-center gap-1 transition-colors" data-tag-name="${name}"><span class="font-bold leading-none">&times;</span> ${name} <span class="text-gray-400 text-[10px]">${sourceLabel}</span></button>`;
+                }).join('')
+                : '<span class="text-gray-400 text-xs">点击上方推荐标签或手工添加</span>';
+            pendingTagPoolEl.innerHTML = `
+                <div class="text-xs font-medium text-emerald-700 mb-1.5">待提交标签池${count ? ` (${count})` : ''}</div>
+                <div class="flex flex-wrap">${pendingHtml}</div>
             `;
         }
 
-        async function resolveTagAndAddToPending(tagName, source = 'unknown') {
+        function resolveTagAndAddToPending(tagName, source = 'human') {
             const { qType, qId } = getCurrentQTypeAndId();
             const normalizedName = normalizeTagName(tagName);
             if (!qId || qId <= 0) {
@@ -392,30 +373,15 @@
             }
             if (!normalizedName) return;
 
-            const r = await fetch(`${API_BASE}/questions/tags/resolve`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    question_type: qType,
-                    question_id: qId,
-                    tag_name: normalizedName,
-                    default_tag_type: 'domain',
-                    default_tag_enabled: 1,
-                }),
-            });
-            const data = await r.json().catch(() => ({}));
-            if (!r.ok) {
-                setAuditMsg(data.detail || '标签解析失败', 'error');
-                return;
-            }
-            const resolvedName = normalizeTagName((data.tag || {}).tag_name || normalizedName);
-            addPendingTagName(resolvedName);
-            setAuditMsg(
-                data.created
-                    ? `已添加新标签并加入待提交池（来源：${source}）`
-                    : `已复用已有标签并加入待提交池（来源：${source}）`,
-                'success'
-            );
+            // source: 'ai' for AI推荐, 'human' for 手工/搜索
+            const tagType = source === 'ai' || source === 'AI推荐' ? 'ai' : 'human';
+            addPendingTagName(normalizedName, tagType);
+            const sourceLabel = tagType === 'ai' ? 'AI推荐' : '人工添加';
+            setAuditMsg(`已加入待提交标签池（来源：${sourceLabel}），审核提交时写入`, 'success');
+        }
+
+        function getSelectedFatherTag() {
+            return document.getElementById('fatherTagSelect').value;
         }
 
         async function aiSuggestTags() {
@@ -425,12 +391,12 @@
                 setAuditMsg('请先在未审核列表中选择题目', 'error');
                 return;
             }
+            if (!getSelectedFatherTag()) {
+                setAuditMsg('请先选择一级标签', 'error');
+                return;
+            }
             state.loading.aiSuggest = true;
             setBtnLoading(aiSuggestBtn, 'AI 推荐中...', true);
-            const reqStart = Date.now();
-            // #region agent log
-            debugPerfLog('recommend-admin.html:aiSuggestTags:entry', 'ai suggest request start', { qType, qId }, 'H5');
-            // #endregion
             try {
                 const r = await fetch(`${API_BASE}/questions/${qType}/${qId}/ai-tag-suggest`, {
                     method: 'POST',
@@ -438,14 +404,6 @@
                     body: JSON.stringify({ auto_apply: false }),
                 });
                 const data = await r.json().catch(() => ({}));
-                // #region agent log
-                debugPerfLog(
-                    'recommend-admin.html:aiSuggestTags:response',
-                    'ai suggest response received',
-                    { status: r.status, ok: r.ok, elapsed_ms: Date.now() - reqStart, recommended_count: (data.recommended_tags || data.suggested_tags || []).length },
-                    'H5'
-                );
-                // #endregion
                 if (!r.ok) {
                     setAuditMsg(data.detail || 'AI 推荐失败', 'error');
                     return;
@@ -507,6 +465,10 @@
                 setAuditMsg('请先在未审核列表中选择题目', 'error');
                 return;
             }
+            if (!getSelectedFatherTag()) {
+                setAuditMsg('请先选择一级标签', 'error');
+                return;
+            }
             const raw = document.getElementById('manualTagNames').value || '';
             const tagName = normalizeTagName(raw);
             if (!tagName) {
@@ -526,10 +488,19 @@
 
         function buildAuditSubmitPayload() {
             const { qType } = getCurrentQTypeAndId();
+            const aiTagNames = [];
+            const humanTagNames = [];
+            for (const [name, source] of state.pendingTagNames) {
+                if (source === 'ai') aiTagNames.push(name);
+                else humanTagNames.push(name);
+            }
             const payload = {
-                tag_ids: collectSelectedTagIds(),
-                tag_names: [...state.pendingTagNames],
-                default_tag_type: 'domain',
+                tag_ids: [],
+                tag_names: [...aiTagNames, ...humanTagNames],
+                ai_tag_names: aiTagNames,
+                human_tag_names: humanTagNames,
+                father_tag: getSelectedFatherTag(),
+                default_tag_type: 'human',
                 default_tag_enabled: 1,
                 question_text: document.getElementById('editQuestionText').value,
                 explanation: document.getElementById('editExplanation').value,
@@ -559,6 +530,10 @@
                 return;
             }
             const payload = buildAuditSubmitPayload();
+            if (!payload.father_tag) {
+                setAuditMsg('请先选择一级标签', 'error');
+                return;
+            }
             if (!payload.tag_ids.length && !payload.tag_names.length) {
                 setAuditMsg('请至少保留或添加一个标签后再提交', 'error');
                 return;
@@ -575,14 +550,14 @@
             }
             setAuditMsg('审核提交通过：标签已确认，题目已通过', 'success');
             state.currentQuestionId = 0;
-            state.existingTags = [];
-            state.pendingTagNames = new Set();
+            state.currentDocumentId = null;
+            state.pendingTagNames = new Map();
             state.aiSuggestedTags = [];
             state.aiCandidateTags = [];
             document.getElementById('qId').value = '';
             renderCurrentBanner();
-            renderTagList();
             renderSuggestTags();
+            loadDocPreview(null);
             tagSearchListEl.innerHTML = '';
             await loadPendingQuestions();
         }
@@ -590,12 +565,11 @@
         async function openQuestionAudit(questionId) {
             state.currentQuestionId = Number(questionId);
             document.getElementById('qId').value = String(questionId);
-            state.pendingTagNames = new Set();
+            state.pendingTagNames = new Map();
             state.aiSuggestedTags = [];
             state.aiCandidateTags = [];
             renderCurrentBanner();
             await loadQuestionDetail();
-            await loadQuestionTags();
             renderSuggestTags();
             setAuditMsg('已加载题目，请手动点击“AI 推荐标签”触发推荐', 'info');
         }
@@ -636,36 +610,24 @@
             if (!btn) return;
             await openQuestionAudit(Number(btn.dataset.id));
         });
-
-        tagListEl.addEventListener('change', (e) => {
-            const chk = e.target.closest('.tag-check');
-            if (!chk) return;
-            const tagId = Number(chk.dataset.tagId);
-            state.existingTags = state.existingTags.map(t => t.id === tagId ? { ...t, selected: chk.checked } : t);
-        });
-
-        tagListEl.addEventListener('click', (e) => {
-            const removeExisting = e.target.closest('.remove-existing-tag');
-            if (removeExisting) {
-                const tagId = Number(removeExisting.dataset.tagId);
-                state.existingTags = state.existingTags.filter(t => t.id !== tagId);
-                renderTagList();
-                return;
-            }
-            const removePending = e.target.closest('.remove-pending-tag');
-            if (removePending) {
-                const name = normalizeTagName(removePending.dataset.tagName || '');
-                state.pendingTagNames.delete(name);
-                renderSuggestTags();
+        pendingPaginationEl.addEventListener('click', (e) => {
+            const btn = e.target.closest('.pend-page-btn');
+            if (!btn || btn.disabled) return;
+            const page = Number(btn.dataset.page);
+            const totalPages = Math.ceil(state.pendingItems.length / state.pendingPageSize);
+            if (page >= 1 && page <= totalPages) {
+                state.pendingPage = page;
+                renderPendingPage();
             }
         });
+
 
         suggestTagListEl.addEventListener('click', (e) => {
             const btn = e.target.closest('.add-ai-tag-btn');
             if (!btn) return;
             resolveTagAndAddToPending(btn.dataset.tagName || '', 'AI推荐');
         });
-        suggestTagListEl.addEventListener('click', (e) => {
+        pendingTagPoolEl.addEventListener('click', (e) => {
             const removeBtn = e.target.closest('.remove-suggest-tag');
             if (!removeBtn) return;
             const name = normalizeTagName(removeBtn.dataset.tagName || '');
@@ -684,24 +646,40 @@
         document.getElementById('qType').addEventListener('change', async () => {
             document.getElementById('qId').value = '';
             state.currentQuestionId = 0;
-            state.existingTags = [];
-            state.pendingTagNames = new Set();
+            state.currentDocumentId = null;
+            state.pendingTagNames = new Map();
             state.aiSuggestedTags = [];
             state.aiCandidateTags = [];
             renderCurrentBanner();
-            renderTagList();
             renderSuggestTags();
+            loadDocPreview(null);
             tagSearchListEl.innerHTML = '';
             await loadPendingQuestions();
         });
-        document.getElementById('confirmBtn').addEventListener('click', () => updateConfirm(1));
-        document.getElementById('unconfirmBtn').addEventListener('click', () => updateConfirm(0));
         document.getElementById('aiSuggestBtn').addEventListener('click', aiSuggestTags);
         document.getElementById('searchTagsBtn').addEventListener('click', searchTags);
         document.getElementById('saveManualTagsBtn').addEventListener('click', saveManualTags);
         document.getElementById('saveQuestionBtn').addEventListener('click', saveQuestion);
 
+        async function loadFatherTagOptions() {
+            const select = document.getElementById('fatherTagSelect');
+            try {
+                const r = await fetch(`${API_BASE}/tags/father-tags`);
+                const data = await r.json();
+                select.innerHTML = '<option value="">请选择一级标签</option>';
+                (data.items || []).forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t.tag_name;
+                    opt.textContent = t.tag_name;
+                    select.appendChild(opt);
+                });
+            } catch {
+                select.innerHTML = '<option value="">加载失败，请刷新</option>';
+            }
+        }
+
         renderSuggestTags();
+        loadFatherTagOptions().catch(() => { });
         loadPendingQuestions().catch(() => { });
     </script>
 </body>

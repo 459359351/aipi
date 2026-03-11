@@ -20,9 +20,9 @@
                         <a href="/static/upload.html" class="text-blue-600 font-medium">上传文档</a>
                         <a href="/static/list.html" class="text-gray-600 hover:text-blue-600">文档列表</a>
                         <a href="/static/generate.html" class="text-gray-600 hover:text-blue-600">AI 出题</a>
+                        <a href="/static/recommend-admin.html" class="text-gray-600 hover:text-blue-600">题目审核</a>
                         <a href="/static/practice.html" class="text-gray-600 hover:text-blue-600">模拟答题</a>
-                        <a href="/static/recommend-admin.html" class="text-gray-600 hover:text-blue-600">推荐管理</a>
-                        <a href="/static/tags.html" class="text-gray-600 hover:text-blue-600">标签管理</a>
+                        <a href="/static/tags.html" class="text-gray-600 hover:text-blue-600" style="display:none">标签管理</a>
                         <a href="/docs" class="text-gray-600 hover:text-blue-600">API 文档</a>
                     </div>
                 </div>
@@ -61,13 +61,7 @@
                             <label class="block text-sm font-medium text-gray-700 mb-2">一级标签</label>
                             <select id="docType" onchange="onFatherTagChange()"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <option value="">请选择</option>
-                                <option value="工会工作">工会工作</option>
-                                <option value="共青团工作">共青团工作</option>
-                                <option value="CI工作">CI工作</option>
-                                <option value="舆情工作">舆情工作</option>
-                                <option value="党建工作">党建工作</option>
-                                <option value="企业文化">企业文化</option>
+                                <option value="">加载中...</option>
                             </select>
                         </div>
 
@@ -82,6 +76,8 @@
                         </div>
                     </div>
 
+                    <!-- 以下字段暂时隐藏，保留 DOM 以备后续启用 -->
+                    <div class="hidden">
                     <div class="grid grid-cols-2 gap-4">
                         <!-- 组织维度 -->
                         <div>
@@ -124,6 +120,7 @@
                         <input type="text" id="uploadUser" placeholder="用户标识"
                             class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
+                    </div><!-- /hidden -->
 
                     <!-- 提交按钮 -->
                     <div class="flex items-center justify-end space-x-4">
@@ -159,20 +156,26 @@
     </div>
 
     <script>
-        // 一级→二级标签级联映射
-        const TAG_MAP = {
-            '工会工作': ['工会组织建设工作', '工会民主管理工作', '工会经济技术工作', '工会财务与经审工作', '工会女职工工作', '职工之家建设工作', '其他工会工作'],
-            '共青团工作': ['团的组织建设工作', '思想政治引领', '服务青年发展', '社会实践与志愿服务'],
-            'CI工作': ['标准化文件', '制度执行'],
-            '舆情工作': ['负面舆情案例', '制度执行'],
-            '党建工作': ['党的基本制度理论及相关要求', '党风廉政建设', '党员教育发展', '组织建设', '党建工作责任制考核'],
-            '企业文化': ['企业文化', '宣传工作'],
-        };
+        async function loadFatherTags() {
+            const select = document.getElementById('docType');
+            try {
+                const r = await fetch('/api/v1/tags/father-tags');
+                const data = await r.json();
+                select.innerHTML = '<option value="">请选择</option>';
+                (data.items || []).forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t.tag_name;
+                    opt.textContent = t.tag_name;
+                    select.appendChild(opt);
+                });
+            } catch {
+                select.innerHTML = '<option value="">加载失败，请刷新</option>';
+            }
+        }
 
-        function onFatherTagChange() {
+        async function onFatherTagChange() {
             const fatherTag = document.getElementById('docType').value;
             const subSelect = document.getElementById('businessDomain');
-            subSelect.innerHTML = '';
 
             if (!fatherTag) {
                 subSelect.innerHTML = '<option value="">请先选择一级标签</option>';
@@ -180,16 +183,25 @@
                 return;
             }
 
-            const subTags = TAG_MAP[fatherTag] || [];
-            subSelect.innerHTML = '<option value="">请选择</option>';
-            subTags.forEach(tag => {
-                const opt = document.createElement('option');
-                opt.value = tag;
-                opt.textContent = tag;
-                subSelect.appendChild(opt);
-            });
-            subSelect.disabled = false;
+            subSelect.innerHTML = '<option value="">加载中...</option>';
+            subSelect.disabled = true;
+            try {
+                const r = await fetch(`/api/v1/tags/sub-tags?father_tag=${encodeURIComponent(fatherTag)}`);
+                const data = await r.json();
+                subSelect.innerHTML = '<option value="">请选择</option>';
+                (data.items || []).forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t.tag_name;
+                    opt.textContent = t.tag_name;
+                    subSelect.appendChild(opt);
+                });
+                subSelect.disabled = false;
+            } catch {
+                subSelect.innerHTML = '<option value="">加载失败</option>';
+            }
         }
+
+        document.addEventListener('DOMContentLoaded', loadFatherTags);
 
         const form = document.getElementById('uploadForm');
         const submitBtn = document.getElementById('submitBtn');

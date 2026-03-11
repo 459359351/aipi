@@ -138,7 +138,7 @@ def save_knowledge_points(
     existing_tag_map = {t.tag_name: (t.tag_type or "", int(t.is_enabled or 0)) for t in all_tags}
     enabled_preset_names = {
         t.tag_name for t in all_tags
-        if int(t.is_enabled or 0) == 1 and (t.tag_type or "") != "candidate"
+        if int(t.is_enabled or 0) == 1 and (t.tag_type or "") != "ai"
     }
     saved = []
     for i, ep in enumerate(extracted_points):
@@ -163,14 +163,14 @@ def save_knowledge_points(
                 tag = get_or_create_tag(db, tag_name=name, tag_type=tag_type, is_enabled=1)
                 kp.tags.append(tag)
             else:
-                get_or_create_tag(db, tag_name=name, tag_type="candidate", is_enabled=0)
+                get_or_create_tag(db, tag_name=name, tag_type="ai", is_enabled=0)
 
-        # 候选新标签：只入 tags 表（tag_type=candidate），不自动挂到知识点上
+        # 候选新标签：只入 tags 表（tag_type=ai），不自动挂到知识点上
         for cand in getattr(ep, "new_tags", []) or []:
             cand_name = str(cand).strip()
             if not cand_name:
                 continue
-            get_or_create_tag(db, tag_name=cand_name, tag_type="candidate", is_enabled=0)
+            get_or_create_tag(db, tag_name=cand_name, tag_type="ai", is_enabled=0)
 
         saved.append(kp)
         logger.info(f"[MySQL] 知识点入库 {i+1}/{total}: id={kp.id}, title='{kp.title[:30]}', tags={len(ep.tags)}个")

@@ -17,93 +17,103 @@
                     <a href="/static/upload.html" class="text-gray-700 hover:text-blue-600">上传文档</a>
                     <a href="/static/list.html" class="text-gray-700 hover:text-blue-600">文档列表</a>
                     <a href="/static/generate.html" class="text-gray-700 hover:text-blue-600">AI 出题</a>
+                    <a href="/static/recommend-admin.html" class="text-gray-700 hover:text-blue-600">题目审核</a>
                     <a href="/static/practice.html" class="text-gray-700 hover:text-blue-600">模拟答题</a>
-                    <a href="/static/recommend-admin.html" class="text-gray-700 hover:text-blue-600">推荐管理</a>
-                    <a href="/static/tags.html" class="text-gray-700 hover:text-blue-600">标签管理</a>
+                    <a href="/static/tags.html" class="text-gray-700 hover:text-blue-600" style="display:none">标签管理</a>
                     <a href="/docs" class="text-gray-700 hover:text-blue-600">API 文档</a>
                 </div>
             </div>
         </div>
     </nav>
 
-    <div class="max-w-4xl mx-auto px-4 py-10 flex items-center justify-center">
+    <div class="max-w-5xl mx-auto px-4 py-10">
         <div class="bg-white rounded-2xl shadow-2xl p-12 text-center w-full">
             <!-- Logo / 标题 -->
-            <div class="mb-8">
+            <div class="mb-10">
                 <h1 class="text-5xl font-bold text-gray-800 mb-4">📚 AI 知识处理服务</h1>
                 <p class="text-lg text-gray-600">考试平台文档上传、解析、知识点抽取与 RAG 知识库同步</p>
             </div>
 
-            <!-- 功能入口 -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                <a href="/static/upload.html" class="group block p-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
+            <!-- 功能入口：第一行 2 卡片（文档管理） -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+                <a href="/static/upload.html" class="group block p-7 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
                     <div class="text-white">
-                        <div class="text-5xl mb-4">📤</div>
-                        <h2 class="text-2xl font-bold mb-2">上传文档</h2>
-                        <p class="text-blue-100">上传 PDF、Word、TXT 文档并提交元数据</p>
+                        <div class="text-4xl mb-3">📤</div>
+                        <h2 class="text-xl font-bold mb-1">上传文档</h2>
+                        <p class="text-blue-100 text-sm">上传 PDF、Word、TXT 文档并提交元数据</p>
                     </div>
                 </a>
 
-                <a href="/static/list.html" class="group block p-8 bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
+                <a href="/static/list.html" class="group block p-7 bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
                     <div class="text-white">
-                        <div class="text-5xl mb-4">📋</div>
-                        <h2 class="text-2xl font-bold mb-2">文档列表</h2>
-                        <p class="text-purple-100">查看已上传文档和解析状态</p>
-                    </div>
-                </a>
-
-                <a href="/static/practice.html" class="group block p-8 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
-                    <div class="text-white">
-                        <div class="text-5xl mb-4">✏️</div>
-                        <h2 class="text-2xl font-bold mb-2">模拟答题</h2>
-                        <p class="text-emerald-100">答错后触发「推荐练习更多」</p>
-                    </div>
-                </a>
-
-                <a href="/static/recommend-admin.html" class="group block p-8 bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
-                    <div class="text-white">
-                        <div class="text-5xl mb-4">⚙️</div>
-                        <h2 class="text-2xl font-bold mb-2">推荐管理</h2>
-                        <p class="text-amber-100">为人工作业题目生成知识点关联</p>
-                    </div>
-                </a>
-
-                <a href="/static/tags.html" class="group block p-8 bg-gradient-to-br from-slate-700 to-slate-900 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
-                    <div class="text-white">
-                        <div class="text-5xl mb-4">🏷️</div>
-                        <h2 class="text-2xl font-bold mb-2">标签管理</h2>
-                        <p class="text-slate-200">维护预设标签（多类多簇）</p>
+                        <div class="text-4xl mb-3">📋</div>
+                        <h2 class="text-xl font-bold mb-1">文档列表</h2>
+                        <p class="text-purple-100 text-sm">查看已上传文档和解析状态</p>
                     </div>
                 </a>
             </div>
 
-            <!-- API 文档链接 -->
-            <div class="pt-6 border-t">
+            <!-- 功能入口：第二行 3 卡片（考试功能） -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+                <a href="/static/generate.html" class="group block p-7 bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
+                    <div class="text-white">
+                        <div class="text-4xl mb-3">🤖</div>
+                        <h2 class="text-xl font-bold mb-1">AI 出题</h2>
+                        <p class="text-rose-100 text-sm">基于知识点自动生成考试题目</p>
+                    </div>
+                </a>
+
+                <a href="/static/recommend-admin.html" class="group block p-7 bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
+                    <div class="text-white">
+                        <div class="text-4xl mb-3">⚙️</div>
+                        <h2 class="text-xl font-bold mb-1">题目审核</h2>
+                        <p class="text-amber-100 text-sm">人工题目标签审核与知识点关联</p>
+                    </div>
+                </a>
+
+                <a href="/static/practice.html" class="group block p-7 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition-all">
+                    <div class="text-white">
+                        <div class="text-4xl mb-3">✏️</div>
+                        <h2 class="text-xl font-bold mb-1">模拟答题</h2>
+                        <p class="text-emerald-100 text-sm">套题练习与智能推荐</p>
+                    </div>
+                </a>
+            </div>
+
+            <!-- 标签管理卡片：隐藏但保留代码 -->
+            <div style="display:none">
+                <a href="/static/tags.html" class="group block p-7 bg-gradient-to-br from-slate-700 to-slate-900 rounded-xl shadow-lg">
+                    <div class="text-white">
+                        <div class="text-4xl mb-3">🏷️</div>
+                        <h2 class="text-xl font-bold mb-1">标签管理</h2>
+                        <p class="text-slate-200 text-sm">维护预设标签（多类多簇）</p>
+                    </div>
+                </a>
+            </div>
+
+            <!-- 底部：API 文档 + 系统状态 -->
+            <div class="pt-6 border-t flex items-center justify-between text-sm">
                 <a href="/docs" class="inline-flex items-center text-blue-600 hover:text-blue-700 font-medium">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                     </svg>
-                    API 文档 (Swagger UI)
+                    API 文档
                 </a>
-            </div>
-
-            <!-- 系统状态 -->
-            <div class="mt-8 pt-6 border-t">
-                <div id="statusContainer" class="flex items-center justify-center space-x-6 text-sm">
+                <div id="statusContainer" class="flex items-center space-x-5">
                     <div class="flex items-center">
-                        <span class="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
-                        <span class="text-gray-600">服务运行中</span>
+                        <span class="w-2 h-2 bg-green-500 rounded-full mr-1.5 animate-pulse"></span>
+                        <span class="text-gray-500">服务运行中</span>
                     </div>
                     <div id="dbStatus" class="flex items-center">
-                        <span class="w-2 h-2 bg-gray-400 rounded-full mr-2"></span>
-                        <span class="text-gray-600">数据库: 检测中...</span>
+                        <span class="w-2 h-2 bg-gray-400 rounded-full mr-1.5"></span>
+                        <span class="text-gray-500">数据库: 检测中...</span>
                     </div>
                 </div>
             </div>
         </div>
 
         <!-- 版本信息 -->
-        <div class="text-center mt-6 text-gray-600 text-sm">
+        <div class="text-center mt-4 text-gray-400 text-xs">
             <p id="versionInfo">Knowledge Service v1.0.0</p>
         </div>
     </div>

@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, BackgroundTasks, Query
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 
@@ -273,3 +274,49 @@ async def delete_document(document_id: int, db: Session = Depends(get_db)):
             "minio_deleted": minio_deleted,
         },
     }
+
+
+@router.get("/{document_id}/render-html", summary="文档 HTML 预览")
+async def render_document_html(document_id: int, db: Session = Depends(get_db)):
+    """
+    从 MinIO 下载文档原文，转换为 HTML 返回，供审核页面 iframe 内嵌预览。
+    支持 docx / txt，PDF 暂不支持在线预览。
+    """
+    doc = document_service.get_document_by_id(db, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if not doc.file_url:
+        raise HTTPException(status_code=400, detail="文档无文件 URL")
+
+    file_format = (doc.file_format or "").lower()
+
+    try:
+        object_key = _extract_object_key(doc.file_url)
+        file_bytes = minio_service.download_file(object_key)
+    except Exception as e:
+        logger.error(f"[render-html] MinIO 下载失败: document_id={document_id}, error={e}")
+        raise HTTPException(status_code=500, detail=f"文件下载失败: {e}")
+
+    body_html = ""
+    if file_format in ("docx", "doc"):
+        import mammoth
+        result = mammoth.convert_to_html(io.BytesIO(file_bytes))
+        body_html = result.value
+    elif file_format == "txt":
+        text = file_bytes.decode("utf-8", errors="replace")
+        body_html = f"<pre style='white-space:pre-wrap;word-break:break-word'>{text}</pre>"
+    elif file_format == "pdf":
+        body_html = "<p style='color:#999;text-align:center;margin-top:40px'>PDF 文档暂不支持在线预览</p>"
+    else:
+        body_html = f"<p style='color:#999;text-align:center;margin-top:40px'>不支持的文件格式: {file_format}</p>"
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+body {{ font-family: -apple-system, "Microsoft YaHei", sans-serif; font-size: 14px; line-height: 1.8; color: #333; padding: 20px; margin: 0; }}
+table {{ border-collapse: collapse; width: 100%; margin: 12px 0; }}
+td, th {{ border: 1px solid #ddd; padding: 6px 10px; text-align: left; }}
+th {{ background: #f5f5f5; }}
+h1 {{ font-size: 20px; }} h2 {{ font-size: 17px; }} h3 {{ font-size: 15px; }}
+p {{ margin: 8px 0; }}
+</style></head><body>{body_html}</body></html>"""
+    return HTMLResponse(content=html)
