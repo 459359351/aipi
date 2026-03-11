@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS father_tags (
 
 -- Step 2: tags 表新增 father_tag 列
 ALTER TABLE tags
-ADD COLUMN IF NOT EXISTS father_tag VARCHAR(128) NULL COMMENT '对应的一级标签名（多个用逗号分隔）' AFTER tag_type;
+ADD COLUMN father_tag VARCHAR(128) NULL COMMENT '对应的一级标签名（多个用逗号分隔）' AFTER tag_type;
 
 -- Step 3: 插入一级标签种子数据
 INSERT INTO

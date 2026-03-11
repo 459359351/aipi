@@ -12,14 +12,14 @@
     <nav class="bg-white shadow-sm border-b">
         <div class="max-w-6xl mx-auto px-4 py-3">
             <div class="flex items-center justify-between">
-                <h1 class="text-xl font-semibold text-gray-800">模拟答题</h1>
+                <h1 class="text-xl font-semibold text-gray-800">AI 知识处理服务</h1>
                 <div class="space-x-4 text-sm">
                     <a href="/static/index.html" class="text-gray-700 hover:text-blue-600">首页</a>
                     <a href="/static/upload.html" class="text-gray-700 hover:text-blue-600">上传文档</a>
                     <a href="/static/list.html" class="text-gray-700 hover:text-blue-600">文档列表</a>
                     <a href="/static/generate.html" class="text-gray-700 hover:text-blue-600">AI 出题</a>
                     <a href="/static/practice.html" class="text-blue-600 font-medium">模拟答题</a>
-                    <a href="/static/recommend-admin.html" class="text-gray-700 hover:text-blue-600">推荐管理</a>
+                    <a href="/static/recommend-admin.html" class="text-gray-700 hover:text-blue-600">题目审核</a>
                     <a href="/static/tags.html" class="text-gray-700 hover:text-blue-600">标签管理</a>
                     <a href="/docs" class="text-gray-700 hover:text-blue-600">API 文档</a>
                 </div>
@@ -281,7 +281,7 @@
                 loading.classList.add('hidden');
                 const related = data.related_questions || [];
                 if (related.length === 0) {
-                    list.innerHTML = '<p class="text-gray-500">暂无相关推荐题目（可尝试在「推荐管理」页为人工作业题目生成知识点关联）</p>';
+                    list.innerHTML = '<p class="text-gray-500">暂无相关推荐题目（可尝试在「题目审核」页为人工作业题目生成知识点关联）</p>';
                     return;
                 }
                 related.forEach((q, i) => {

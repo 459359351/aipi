@@ -18,7 +18,7 @@ class Tag(Base):
     )
     father_tag = Column(
         String(128), nullable=True,
-        comment="对应的一级标签名（多个用逗号分隔）",
+        comment="对应的一级标签名",
     )
     is_enabled = Column(
         SmallInteger, nullable=False, default=0, index=True,
@@ -26,8 +26,5 @@ class Tag(Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<Tag(id={self.id}, tag_name='{self.tag_name}', "
-            f"tag_type='{self.tag_type}', father_tag='{self.father_tag}', "
-            f"is_enabled={self.is_enabled})>"
-        )
+        return f"<Tag(id={self.id}, tag_name='{self.tag_name}', tag_type='{self.tag_type}', is_enabled={self.is_enabled})>"
+

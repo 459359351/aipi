@@ -380,14 +380,26 @@ stateDiagram-v2
 #### 3.1.3 tags（标签字典表）
 
 
-| 字段       | 类型           | 约束                 | 说明   |
-| -------- | ------------ | ------------------ | ---- |
-| id       | BIGINT       | PK, AUTO_INCREMENT | 主键   |
-| tag_name | VARCHAR(128) | NOT NULL, UNIQUE   | 标签名称 |
-| tag_type | VARCHAR(64)  | NULL               | 标签分类 |
+| 字段         | 类型           | 约束                          | 说明                                        |
+| ---------- | ------------ | --------------------------- | ----------------------------------------- |
+| id         | BIGINT       | PK, AUTO_INCREMENT          | 主键                                        |
+| tag_name   | VARCHAR(128) | NOT NULL, UNIQUE, INDEX     | 标签名称                                      |
+| tag_type   | VARCHAR(64)  | NULL                        | 标签分类                                      |
+| father_tag | VARCHAR(128) | NULL                        | 对应的一级标签名（支持逗号分隔多值，如 `CI工作,舆情工作`） |
+| is_enabled | SMALLINT     | NOT NULL, DEFAULT 0, INDEX  | 是否可用标签：0 否（候选/待审核），1 是（人工确认）   |
 
 
-标签采用「获取或创建」策略：写入知识点/题目时，若标签已存在则复用，否则新建。
+标签采用「获取或创建」策略：写入知识点/题目时，若标签已存在则复用，否则新建。新增标签时会同步递增对应 `father_tags.sub_tag_count`。
+
+#### 3.1.3.1 father_tags（一级标签字典表）
+
+| 字段            | 类型           | 约束                 | 说明           |
+| ------------- | ------------ | ------------------ | ------------ |
+| id            | BIGINT       | PK, AUTO_INCREMENT | 主键           |
+| tag_name      | VARCHAR(128) | NOT NULL, UNIQUE   | 一级标签名称       |
+| sub_tag_count | INT          | NOT NULL, DEFAULT 0| 对应的二级标签数量   |
+
+一级标签作为二级标签（tags）的分类维度，前端动态查询 `father_tags` 表填充下拉选项，选中后联动加载对应二级标签。
 
 **tag_type 建议枚举（多类多簇）**：
 
@@ -589,6 +601,7 @@ stateDiagram-v2
 | `migrate_questions.sql` | 为历史 ai_tb_* 表添加 document_id/task_id 列及索引；创建 question_tasks 表（旧方案，已不再写入 ai_tb_*） | 仅兼容旧数据时使用 |
 | `migrate_tb_questions.sql` | 为正式题库表 tb_single_choices / tb_multiple_choices / tb_judges / tb_essays 添加 document_id/task_id/review_status/is_ai_generated 列及索引 | 启用 AI 出题写入 tb_* 前 |
 | `migrate_tag_system.sql` | 创建 `question_tag_rel` 并初始化一批党建领域预设标签（domain/knowledge_type/difficulty） | 启用标签驱动推荐前 |
+| `migrate_father_tags.sql` | 创建 `father_tags` 表；为 `tags` 表添加 `father_tag` VARCHAR(128) 和 `is_enabled` SMALLINT 列及索引 | 启用一级标签分类前 |
 
 
 > 两个脚本均需使用具有 CREATE / ALTER 权限的 MySQL 账号手动执行，应用层 `aipi_user` 通常无此权限。
@@ -896,9 +909,11 @@ stateDiagram-v2
 | GET | `/types` | 获取 `tag_type` 枚举与含义 |
 | GET | `` | 查询标签列表（支持 tag_type/keyword 分页筛选） |
 | GET | `/grouped` | 按 tag_type 分组返回标签（便于前端下拉/簇展示） |
-| POST | `` | 新增标签 |
-| PUT | `/{tag_id}` | 编辑标签 |
-| DELETE | `/{tag_id}` | 删除标签（会级联删除题目/知识点关联） |
+| GET | `/father-tags` | 获取所有一级标签（查询 `father_tags` 表） |
+| GET | `/sub-tags?father_tag=xxx` | 按一级标签获取可用二级标签（`is_enabled=1`，使用 `FIND_IN_SET` 匹配逗号分隔值） |
+| POST | `` | 新增标签（支持 `father_tag` 字段） |
+| PUT | `/{tag_id}` | 编辑标签（支持 `father_tag` 字段，自动维护 `sub_tag_count` 增减） |
+| DELETE | `/{tag_id}` | 删除标签（会级联删除题目/知识点关联，并递减对应 `father_tags.sub_tag_count`） |
 | POST | `/batch` | 批量导入/更新预设标签 |
 
 对应调试页：`/static/tags.html`
@@ -1157,7 +1172,7 @@ for q, item in pairs:
 
 - `static/generate.html` — **AI 出题调试页**，通过 `/static/generate.html` 访问；
 - `static/practice.html` — **模拟答题页**，通过 `/static/practice.html` 访问，用于答题与错题推荐；
-- `static/recommend-admin.html` — **推荐管理页**，通过 `/static/recommend-admin.html` 访问，用于为人工题生成知识点关联。
+- `static/recommend-admin.html` — **题目审核页**，通过 `/static/recommend-admin.html` 访问，用于逐题审核、AI 推荐标签、一级标签选择与审核提交。
 - `static/tags.html` — **标签管理页**，通过 `/static/tags.html` 访问，用于维护预设标签与查看候选标签（tag_type=candidate）。
 
 `generate.html` 的主要模块：
@@ -1206,9 +1221,14 @@ knowledge_service/
 │   │   ├── document.py              # documents 表
 │   │   ├── knowledge_point.py       # knowledge_points 表
 │   │   ├── tag.py                   # tags 表
+│   │   ├── father_tag.py            # father_tags 一级标签表
 │   │   ├── knowledge_tag_rel.py     # knowledge_tag_rel 关联表（知识点-标签）
+│   │   ├── question_tag_rel.py      # question_tag_rel 关联表（题目-标签）
 │   │   ├── question.py              # tb_* 题型表 + question_tasks 表（历史 ai_tb_* 表仍保留以兼容旧系统）
-│   │   └── question_knowledge_rel.py# question_knowledge_rel 题目-知识点关联表
+│   │   ├── question_knowledge_rel.py# question_knowledge_rel 题目-知识点关联表
+│   │   ├── question_audit_log.py    # question_audit_logs 审核日志表
+│   │   ├── user_profile.py          # user_profiles 用户画像表
+│   │   └── user_question_behavior.py# user_question_behaviors 用户行为表
 │   ├── schemas/                     # Pydantic 请求/响应模型
 │   │   ├── document.py              # 文档相关 Schema
 │   │   ├── knowledge_point.py       # 知识点相关 Schema
@@ -1217,7 +1237,8 @@ knowledge_service/
 │   ├── api/                         # API 路由
 │   │   ├── documents.py             # 文档管理端点（上传/列表/详情/更新/删除/重新解析）
 │   │   ├── knowledge_points.py      # 知识点查询端点
-│   │   ├── questions.py             # AI 出题端点（生成/任务状态/题目查询）
+│   │   ├── questions.py             # AI 出题端点（生成/任务状态/题目查询/审核提交）
+│   │   ├── tags.py                  # 标签管理端点（CRUD/一级标签/二级标签）
 │   │   └── recommendations.py       # 题目推荐与题目-知识点关联管理端点
 │   ├── services/                    # 业务服务层
 │   │   ├── document_service.py      # 文档 CRUD、知识点存储、级联删除
@@ -1237,12 +1258,14 @@ knowledge_service/
 │   ├── detail.html                  # 文档详情页（含编辑/删除/重新解析）
 │   ├── generate.html                # AI 出题调试页
 │   ├── practice.html                # 模拟答题页（答错后触发推荐练习更多）
-│   └── recommend-admin.html         # 推荐管理页（一键为人工题生成题目-知识点关联）
+│   ├── tags.html                    # 标签管理页（维护预设标签与查看候选标签）
+│   └── recommend-admin.html         # 题目审核页（逐题审核、AI 推荐标签、一级标签选择与审核提交）
 ├── docs/                            # 设计文档
 │   ├── SERVICE_DESIGN.md            # 服务设计总览（本文档）
 │   └── AI_QUESTION_GENERATION_DESIGN.md  # AI 出题功能详细设计
 ├── init_tables.sql                  # 初始建表脚本（documents/knowledge_points/tags/rel）
 ├── migrate_questions.sql            # 历史出题功能迁移脚本（ai_tb_* 扩展 + question_tasks）
+├── migrate_father_tags.sql          # 一级标签迁移脚本（father_tags 表 + tags 表扩展字段）
 ├── requirements.txt                 # Python 依赖
 ├── .env.example                     # 环境变量模板
 ├── start.sh                         # 一键启动脚本
@@ -1470,11 +1493,8 @@ flowchart TD
 - `ai-tag-suggest` 返回口径升级：
   - 主字段：`recommended_tags`（直接提炼的推荐标签，去重后最多 5 个）
   - 兼容字段：`suggested_tags`（短期与 `recommended_tags` 保持一致），`new_tag_candidates=[]`
-- AI 推荐标签与人工自定义标签统一走 `POST /api/v1/questions/tags/resolve` 落库校验链路：
-  - 数据库已存在同名标签：直接复用
-  - 数据库不存在同名标签：即时创建新标签后复用
-  - 两种情况都会进入当前题目的「待提交标签池」
-- 最终审核提交时，题目标签关联写入 `question_tag_rel`，并在提交通过时设为 `is_confirmed=1`
+- AI 推荐标签与人工自定义标签统一加入前端「待提交标签池」（仅存于浏览器内存，不即时写库）
+- 最终审核提交时，后端通过 `_resolve_or_create_tag` 统一处理标签落库（已存在则复用，不存在则创建），同时写入 `question_tag_rel`（`is_confirmed=1`），并携带 `father_tag` 信息同步维护 `father_tags.sub_tag_count`
 - 新增未审核题目列表接口：`GET /api/v1/questions/audit/pending`
   - 按题型返回 `review_status!=1` 的题目，附带 `confirmed_tag_count` / `unconfirmed_tag_count` / `audit_status`
 - 新增单题审核详情接口：`GET /api/v1/questions/{question_type}/{question_id}`
@@ -1505,12 +1525,13 @@ flowchart TD
   - 题型切换自动加载未审核题目列表（`single/multiple/judge/essay`）
   - 每行支持进入「逐题审核」：自动加载题目详情与当前标签；AI 推荐改为手动触发（点击 `AI 推荐标签` 按钮）
   - 标签操作支持：推荐标签增删、按关键字搜索 `tags` 加入、手工新增标签（同名去重）
+  - 新增一级标签选择：动态查询 `father_tags` 表填充下拉选项，AI 推荐/手动添加/审核提交均需先选择一级标签
   - 审核页采用「三来源统一标签池」：
     - 来源 A：AI 推荐标签（点击加入）
     - 来源 B：系统内标签搜索并选择（关键词模糊检索）
-    - 来源 C：手工新增标签（单条输入、单条保存，服务端实时校验同名）
-  - 三来源“点击加入”统一调用 `POST /api/v1/questions/tags/resolve`，保证复用/创建规则一致
-  - 标签池中的每个标签在提交前都可删除；删除仅移除「本题待关联集合」，不物理删除 `tags` 表数据
+    - 来源 C：手工新增标签（单条输入、单条保存）
+  - 三来源”点击加入”仅写入浏览器内存（`pendingTagNames`），不即时调用后端 API；审核提交时统一由后端 `_resolve_or_create_tag` 落库
+  - 标签池中的每个标签在提交前都可删除（× 按钮）；删除仅移除「本题待关联集合」，不物理删除 `tags` 表数据
   - 交互反馈规范：
     - AI 推荐按钮支持 loading（推荐中）并防重复提交
     - 标签搜索按钮支持 loading（搜索中）并防重复提交

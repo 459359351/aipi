@@ -4,7 +4,6 @@
 
 import json
 from fastapi import APIRouter, Depends, HTTPException, Query
-import time
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -22,24 +21,6 @@ from ..models.user_question_behavior import UserQuestionBehavior
 from ..models.user_profile import UserProfile
 
 router = APIRouter(prefix="/recommendations", tags=["题目推荐"])
-
-
-# #region agent log
-def _debug_log(location: str, message: str, data: dict, hypothesis_id: str):
-    try:
-        with open("/Users/zhangjingjun/Downloads/zhijia/AIPI/.cursor/debug-abf3c5.log", "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "sessionId": "abf3c5",
-                "runId": "run1",
-                "hypothesisId": hypothesis_id,
-                "location": location,
-                "message": message,
-                "data": data,
-                "timestamp": int(time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-# #endregion
 
 
 @router.get(
@@ -112,19 +93,8 @@ async def post_build_manual_knowledge_rel(db: Session = Depends(get_db)):
     自动写入 question_knowledge_rel。用于支持「按错题推荐」时也能召回人工题。
     """
     try:
-        # #region agent log
-        _debug_log("api/recommendations.py:build_manual:entry", "build manual knowledge rel request", {}, "H2")
-        # #endregion
         result = build_manual_question_knowledge_rel(db)
-        # #region agent log
-        _debug_log("api/recommendations.py:build_manual:exit", "build manual knowledge rel success", result, "H2")
-        # #endregion
     except Exception as exc:
-        # #region agent log
-        _debug_log("api/recommendations.py:build_manual:error", "build manual knowledge rel failed", {
-            "error": str(exc),
-        }, "H2")
-        # #endregion
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return result
 

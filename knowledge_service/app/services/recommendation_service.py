@@ -6,16 +6,6 @@ import json
 import os
 from typing import Dict, List, Optional, Tuple
 
-# #region agent log
-_DEBUG_LOG_PATH = "/Users/zhangjingjun/Downloads/zhijia/AIPI/.cursor/debug-abf3c5.log"
-def _debug_log(location: str, message: str, data: dict, hypothesis_id: str = ""):
-    try:
-        payload = {"sessionId": "abf3c5", "location": location, "message": message, "data": data, "hypothesisId": hypothesis_id, "timestamp": __import__("time").time() * 1000}
-        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-# #endregion
 
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.orm import Session
@@ -611,10 +601,6 @@ def _match_knowledge_for_question(
 ) -> List[int]:
     """根据题干与知识点标题/内容的简单包含关系，返回匹配的知识点 ID 列表（最多 max_rels 个）。"""
     global _match_log_calls
-    # #region agent log
-    if _match_log_calls < 2:
-        _debug_log("_match:entry", "match entry", {"question_text_len": len(question_text or ""), "kp_list_len": len(kp_list), "text_preview": ((question_text or "").strip())[:120]}, "h1,h3,h5")
-    # #endregion
     if not question_text or not kp_list:
         return []
     text = (question_text or "").strip()
@@ -636,12 +622,7 @@ def _match_knowledge_for_question(
             matched.append((score, kp_id))
     matched.sort(key=lambda x: -x[0])
     result = [kp_id for _, kp_id in matched[:max_rels]]
-    # #region agent log
-    if _match_log_calls < 2:
-        first_title = (kp_list[0][1] or "").strip() if kp_list else ""
-        _debug_log("_match:exit", "match exit", {"matched_count": len(result), "first_two_kp_titles": [t for _, t, _ in kp_list[:2]], "first_title_in_text": first_title in text if first_title else False}, "h1,h4")
-        _match_log_calls += 1
-    # #endregion
+    _match_log_calls += 1
     return result
 
 
@@ -692,9 +673,6 @@ def build_manual_question_knowledge_rel(db: Session) -> Dict:
         ).all()
     )
 
-    # #region agent log
-    _debug_log("build_manual:start", "existing relations and enabled tags", {"existing_rels_count": len(existing), "enabled_tag_types": list(preset_tags.keys())[:10]}, "todo-2")
-    # #endregion
 
     processed = 0
     created_kps = 0
@@ -704,9 +682,6 @@ def build_manual_question_knowledge_rel(db: Session) -> Dict:
 
     for q_type, model in QUESTION_MODEL_MAP.items():
         manual_rows = db.query(model).filter(model.document_id.is_(None)).all()
-        # #region agent log
-        _debug_log("build_manual:per_type", "manual count per type", {"q_type": q_type, "manual_count": len(manual_rows)}, "h3")
-        # #endregion
         for row in manual_rows:
             processed += 1
 
@@ -737,8 +712,7 @@ def build_manual_question_knowledge_rel(db: Session) -> Dict:
             try:
                 extracted = extract_knowledge_points_from_qa(qa_text, preset_tags=preset_tags)
             except Exception as e:
-                # 单题失败不影响全局
-                _debug_log("build_manual:llm_fail", "llm extract failed", {"q_type": q_type, "question_id": row.id, "err": str(e)}, "todo-2")
+                logger.warning("[build_manual] llm extract failed q_type=%s q_id=%s err=%s", q_type, row.id, e)
                 continue
 
             # 题目标签：从本题新知识点聚合（并去重/避免重复插入）

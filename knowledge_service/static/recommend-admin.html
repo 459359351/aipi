@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>推荐管理 - 知识处理服务</title>
+    <title>题目审核 - 知识处理服务</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
@@ -12,14 +12,14 @@
     <nav class="bg-white shadow-sm border-b">
         <div class="max-w-6xl mx-auto px-4 py-3">
             <div class="flex items-center justify-between">
-                <h1 class="text-xl font-semibold text-gray-800">推荐管理</h1>
+                <h1 class="text-xl font-semibold text-gray-800">AI 知识处理服务</h1>
                 <div class="space-x-4 text-sm">
                     <a href="/static/index.html" class="text-gray-700 hover:text-blue-600">首页</a>
                     <a href="/static/upload.html" class="text-gray-700 hover:text-blue-600">上传文档</a>
                     <a href="/static/list.html" class="text-gray-700 hover:text-blue-600">文档列表</a>
                     <a href="/static/generate.html" class="text-gray-700 hover:text-blue-600">AI 出题</a>
                     <a href="/static/practice.html" class="text-gray-700 hover:text-blue-600">模拟答题</a>
-                    <a href="/static/recommend-admin.html" class="text-blue-600 font-medium">推荐管理</a>
+                    <a href="/static/recommend-admin.html" class="text-blue-600 font-medium">题目审核</a>
                     <a href="/static/tags.html" class="text-gray-700 hover:text-blue-600">标签管理</a>
                     <a href="/docs" class="text-gray-700 hover:text-blue-600">API 文档</a>
                 </div>
@@ -46,7 +46,7 @@
         </div>
 
         <div class="bg-white rounded-lg shadow-md p-6">
-            <h2 class="text-lg font-semibold text-gray-800 mb-2">题目标签审核</h2>
+            <h2 class="text-lg font-semibold text-gray-800 mb-2">题目审核</h2>
             <p class="text-sm text-gray-600 mb-4">
                 AI 自动继承到题目的标签默认是未确认状态（<code class="bg-gray-100 px-1 rounded">is_confirmed=0</code>），请在此确认。
             </p>
@@ -74,6 +74,10 @@
             <div class="flex flex-wrap gap-2 mb-3">
                 <button type="button" id="aiSuggestBtn"
                     class="px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">AI 推荐标签</button>
+                <select id="fatherTagSelect"
+                    class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">加载中...</option>
+                </select>
                 <input id="manualTagNames" type="text" placeholder="手工添加单个标签，如：组织建设"
                     class="flex-1 min-w-[220px] px-3 py-2 border border-gray-300 rounded-md">
                 <button type="button" id="saveManualTagsBtn"
@@ -87,12 +91,6 @@
             </div>
             <div id="tagSearchList" class="space-y-2 mb-3"></div>
             <div id="suggestTagList" class="space-y-2"></div>
-            <div class="flex gap-2 mt-3">
-                <button type="button" id="confirmBtn"
-                    class="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700">确认选中关联</button>
-                <button type="button" id="unconfirmBtn"
-                    class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700">取消选中确认</button>
-            </div>
 
             <hr class="my-6">
             <h3 class="text-base font-semibold text-gray-800 mb-2">题目内容编辑（一步审核生效）</h3>
@@ -137,11 +135,6 @@
         const searchTagsBtn = document.getElementById('searchTagsBtn');
         const saveManualTagsBtn = document.getElementById('saveManualTagsBtn');
 
-        function debugPerfLog(location, message, data, hypothesisId = 'H0') {
-            // #region agent log
-            fetch('http://127.0.0.1:7480/ingest/f6d85069-68f7-41b5-af08-81428990ce7b', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'abf3c5' }, body: JSON.stringify({ sessionId: 'abf3c5', runId: 'ai_tag_perf', hypothesisId, location, message, data, timestamp: Date.now() }) }).catch(() => { });
-            // #endregion
-        }
 
         const state = {
             currentQuestionId: 0,
@@ -335,55 +328,25 @@
             return [...idSet];
         }
 
-        async function updateConfirm(confirmed) {
-            const { qType, qId } = getCurrentQTypeAndId();
-            const ids = collectSelectedTagIds();
-            if (!qId || qId <= 0) {
-                setAuditMsg('请先在未审核列表中选择题目', 'error');
-                return;
-            }
-            if (!ids.length) {
-                setAuditMsg('请先勾选要处理的标签', 'error');
-                return;
-            }
-            const r = await fetch(`${API_BASE}/questions/${qType}/${qId}/tags/confirm`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tag_ids: ids, confirmed }),
-            });
-            const data = await r.json().catch(() => ({}));
-            if (!r.ok) {
-                setAuditMsg(data.detail || '更新失败', 'error');
-                return;
-            }
-            setAuditMsg(`已更新 ${data.updated ?? 0} 条关联`, 'success');
-            await loadQuestionTags();
-        }
 
         function renderSuggestTags() {
             const suggested = state.aiSuggestedTags || [];
-            const candidates = state.aiCandidateTags || [];
             const pending = [...state.pendingTagNames];
             const sugHtml = suggested.length
                 ? suggested.map(name => `<button type="button" class="add-ai-tag-btn text-xs px-2 py-1 rounded border border-blue-300 text-blue-700 bg-blue-50 mr-2 mb-2" data-tag-name="${name}">+ ${name}</button>`).join('')
                 : '<span class="text-gray-500 text-sm">无</span>';
-            const candHtml = candidates.length
-                ? candidates.map(name => `<button type="button" class="add-ai-tag-btn text-xs px-2 py-1 rounded border border-amber-300 text-amber-700 bg-amber-50 mr-2 mb-2" data-tag-name="${name}">+ ${name}</button>`).join('')
-                : '<span class="text-gray-500 text-sm">无</span>';
             const pendingHtml = pending.length
-                ? pending.map(name => `<button type="button" class="remove-suggest-tag text-xs px-2 py-1 rounded border border-red-300 text-red-700 bg-red-50 mr-2 mb-2" data-tag-name="${name}">删除 ${name}</button>`).join('')
+                ? pending.map(name => `<button type="button" class="remove-suggest-tag text-xs px-2 py-1 rounded border border-red-300 text-red-700 bg-red-50 mr-2 mb-2 inline-flex items-center gap-1" data-tag-name="${name}"><span class="text-red-500 font-bold text-sm leading-none">&times;</span> ${name}</button>`).join('')
                 : '<span class="text-gray-500 text-sm">无</span>';
             suggestTagListEl.innerHTML = `
                 <div class="text-sm text-gray-700 mb-1">推荐标签（点击加入）：</div>
                 <div>${sugHtml}</div>
-                <div class="text-sm text-amber-700 mt-3 mb-1">候选新标签（点击加入）：</div>
-                <div>${candHtml}</div>
                 <div class="text-sm text-emerald-700 mt-3 mb-1">待提交标签池（点击删除）：</div>
                 <div>${pendingHtml}</div>
             `;
         }
 
-        async function resolveTagAndAddToPending(tagName, source = 'unknown') {
+        function resolveTagAndAddToPending(tagName, source = 'unknown') {
             const { qType, qId } = getCurrentQTypeAndId();
             const normalizedName = normalizeTagName(tagName);
             if (!qId || qId <= 0) {
@@ -392,30 +355,12 @@
             }
             if (!normalizedName) return;
 
-            const r = await fetch(`${API_BASE}/questions/tags/resolve`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    question_type: qType,
-                    question_id: qId,
-                    tag_name: normalizedName,
-                    default_tag_type: 'domain',
-                    default_tag_enabled: 1,
-                }),
-            });
-            const data = await r.json().catch(() => ({}));
-            if (!r.ok) {
-                setAuditMsg(data.detail || '标签解析失败', 'error');
-                return;
-            }
-            const resolvedName = normalizeTagName((data.tag || {}).tag_name || normalizedName);
-            addPendingTagName(resolvedName);
-            setAuditMsg(
-                data.created
-                    ? `已添加新标签并加入待提交池（来源：${source}）`
-                    : `已复用已有标签并加入待提交池（来源：${source}）`,
-                'success'
-            );
+            addPendingTagName(normalizedName);
+            setAuditMsg(`已加入待提交标签池（来源：${source}），审核提交时写入`, 'success');
+        }
+
+        function getSelectedFatherTag() {
+            return document.getElementById('fatherTagSelect').value;
         }
 
         async function aiSuggestTags() {
@@ -425,12 +370,12 @@
                 setAuditMsg('请先在未审核列表中选择题目', 'error');
                 return;
             }
+            if (!getSelectedFatherTag()) {
+                setAuditMsg('请先选择一级标签', 'error');
+                return;
+            }
             state.loading.aiSuggest = true;
             setBtnLoading(aiSuggestBtn, 'AI 推荐中...', true);
-            const reqStart = Date.now();
-            // #region agent log
-            debugPerfLog('recommend-admin.html:aiSuggestTags:entry', 'ai suggest request start', { qType, qId }, 'H5');
-            // #endregion
             try {
                 const r = await fetch(`${API_BASE}/questions/${qType}/${qId}/ai-tag-suggest`, {
                     method: 'POST',
@@ -438,14 +383,6 @@
                     body: JSON.stringify({ auto_apply: false }),
                 });
                 const data = await r.json().catch(() => ({}));
-                // #region agent log
-                debugPerfLog(
-                    'recommend-admin.html:aiSuggestTags:response',
-                    'ai suggest response received',
-                    { status: r.status, ok: r.ok, elapsed_ms: Date.now() - reqStart, recommended_count: (data.recommended_tags || data.suggested_tags || []).length },
-                    'H5'
-                );
-                // #endregion
                 if (!r.ok) {
                     setAuditMsg(data.detail || 'AI 推荐失败', 'error');
                     return;
@@ -507,6 +444,10 @@
                 setAuditMsg('请先在未审核列表中选择题目', 'error');
                 return;
             }
+            if (!getSelectedFatherTag()) {
+                setAuditMsg('请先选择一级标签', 'error');
+                return;
+            }
             const raw = document.getElementById('manualTagNames').value || '';
             const tagName = normalizeTagName(raw);
             if (!tagName) {
@@ -529,6 +470,7 @@
             const payload = {
                 tag_ids: collectSelectedTagIds(),
                 tag_names: [...state.pendingTagNames],
+                father_tag: getSelectedFatherTag(),
                 default_tag_type: 'domain',
                 default_tag_enabled: 1,
                 question_text: document.getElementById('editQuestionText').value,
@@ -559,6 +501,10 @@
                 return;
             }
             const payload = buildAuditSubmitPayload();
+            if (!payload.father_tag) {
+                setAuditMsg('请先选择一级标签', 'error');
+                return;
+            }
             if (!payload.tag_ids.length && !payload.tag_names.length) {
                 setAuditMsg('请至少保留或添加一个标签后再提交', 'error');
                 return;
@@ -694,14 +640,30 @@
             tagSearchListEl.innerHTML = '';
             await loadPendingQuestions();
         });
-        document.getElementById('confirmBtn').addEventListener('click', () => updateConfirm(1));
-        document.getElementById('unconfirmBtn').addEventListener('click', () => updateConfirm(0));
         document.getElementById('aiSuggestBtn').addEventListener('click', aiSuggestTags);
         document.getElementById('searchTagsBtn').addEventListener('click', searchTags);
         document.getElementById('saveManualTagsBtn').addEventListener('click', saveManualTags);
         document.getElementById('saveQuestionBtn').addEventListener('click', saveQuestion);
 
+        async function loadFatherTagOptions() {
+            const select = document.getElementById('fatherTagSelect');
+            try {
+                const r = await fetch(`${API_BASE}/tags/father-tags`);
+                const data = await r.json();
+                select.innerHTML = '<option value="">请选择一级标签</option>';
+                (data.items || []).forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t.tag_name;
+                    opt.textContent = t.tag_name;
+                    select.appendChild(opt);
+                });
+            } catch {
+                select.innerHTML = '<option value="">加载失败，请刷新</option>';
+            }
+        }
+
         renderSuggestTags();
+        loadFatherTagOptions().catch(() => { });
         loadPendingQuestions().catch(() => { });
     </script>
 </body>

@@ -18,6 +18,7 @@ from ..models.question import (
     SingleChoice, MultipleChoice, Judge, Essay, QuestionTask,
 )
 from ..models.tag import Tag
+from ..models.father_tag import FatherTag
 from ..models.question_tag_rel import question_tag_rel
 from ..models.question_audit_log import QuestionAuditLog
 from sqlalchemy import select, delete, func, case
@@ -44,24 +45,6 @@ QUESTION_MODEL_MAP = {
     "judge": Judge,
     "essay": Essay,
 }
-
-
-# #region agent log
-def _debug_log(location: str, message: str, data: dict, hypothesis_id: str):
-    try:
-        with open("/Users/zhangjingjun/Downloads/zhijia/AIPI/.cursor/debug-abf3c5.log", "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "sessionId": "abf3c5",
-                "runId": "run1",
-                "hypothesisId": hypothesis_id,
-                "location": location,
-                "message": message,
-                "data": data,
-                "timestamp": int(time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-# #endregion
 
 
 def _normalize_question_type(question_type: str) -> str:
@@ -166,17 +149,29 @@ def _resolve_or_create_tag(
     tag_name: str,
     default_tag_type: str = "domain",
     default_tag_enabled=None,
+    father_tag: str | None = None,
 ) -> tuple[Optional[Tag], bool, str]:
     normalized = _normalize_tag_name(tag_name)
     if not normalized:
         return None, False, ""
     tag = _find_tag_by_name(db, normalized)
     if tag:
+        if father_tag and not tag.father_tag:
+            tag.father_tag = father_tag
         return tag, False, normalized
     enabled = 1 if default_tag_enabled is None else (1 if int(default_tag_enabled) == 1 else 0)
-    tag = Tag(tag_name=normalized, tag_type=default_tag_type or "domain", is_enabled=enabled)
+    tag = Tag(tag_name=normalized, tag_type=default_tag_type or "domain", is_enabled=enabled, father_tag=father_tag)
     db.add(tag)
     db.flush()
+    # 新建标签时同步更新一级标签的 sub_tag_count（支持逗号分隔多父标签）
+    if father_tag:
+        for ft_name in father_tag.split(","):
+            ft_name = ft_name.strip()
+            if not ft_name:
+                continue
+            ft = db.query(FatherTag).filter(FatherTag.tag_name == ft_name).first()
+            if ft:
+                ft.sub_tag_count = (ft.sub_tag_count or 0) + 1
     return tag, True, normalized
 
 
@@ -529,25 +524,12 @@ async def get_question_tags(
     q_type = question_type.strip().lower()
     if q_type not in ("single", "multiple", "judge", "essay"):
         raise HTTPException(status_code=400, detail="question_type 必须是 single/multiple/judge/essay")
-    # #region agent log
-    _debug_log("api/questions.py:get_question_tags:entry", "get question tags request", {
-        "question_type": q_type,
-        "question_id": question_id,
-    }, "H1")
-    # #endregion
     rows = db.execute(
         select(Tag.id, Tag.tag_name, Tag.tag_type, Tag.is_enabled, question_tag_rel.c.is_confirmed)
         .select_from(question_tag_rel.join(Tag, question_tag_rel.c.tag_id == Tag.id))
         .where((question_tag_rel.c.question_type == q_type) & (question_tag_rel.c.question_id == question_id))
         .order_by(Tag.tag_type, Tag.tag_name)
     ).all()
-    # #region agent log
-    _debug_log("api/questions.py:get_question_tags:exit", "get question tags success", {
-        "question_type": q_type,
-        "question_id": question_id,
-        "rows": len(rows),
-    }, "H4")
-    # #endregion
     return {
         "question_type": q_type,
         "question_id": question_id,
@@ -590,14 +572,6 @@ async def set_question_tags(
     default_tag_type = body.get("default_tag_type") or ""
     default_tag_enabled = body.get("default_tag_enabled")
 
-    # #region agent log
-    _debug_log("api/questions.py:set_question_tags:entry", "set question tags request", {
-        "question_type": q_type,
-        "question_id": question_id,
-        "tag_ids_len": len(tag_ids),
-        "tag_names_len": len(tag_names),
-    }, "H4")
-    # #endregion
     resolved_ids: set[int] = set()
     normalized_names_count = 0
     existing_hit_count = 0
@@ -650,13 +624,6 @@ async def set_question_tags(
             )
         )
     db.commit()
-    # #region agent log
-    _debug_log("api/questions.py:set_question_tags:exit", "set question tags success", {
-        "question_type": q_type,
-        "question_id": question_id,
-        "resolved_ids_len": len(resolved_ids),
-    }, "H4")
-    # #endregion
     logger.info(
         "[set_question_tags] q_type=%s q_id=%s input_ids=%s input_names=%s normalized_names=%s existing_hit=%s created=%s resolved=%s cost_ms=%s",
         q_type,
@@ -782,6 +749,7 @@ async def audit_submit_question(
     tag_names = body.get("tag_names") or []
     default_tag_type = body.get("default_tag_type") or "domain"
     default_tag_enabled = body.get("default_tag_enabled")
+    father_tag = body.get("father_tag") or None
 
     resolved_ids: set[int] = set()
     created_count = 0
@@ -804,6 +772,7 @@ async def audit_submit_question(
             tag_name=normalized,
             default_tag_type=default_tag_type,
             default_tag_enabled=default_tag_enabled,
+            father_tag=father_tag,
         )
         if created:
             created_count += 1
@@ -884,28 +853,12 @@ async def ai_tag_suggest_for_question(
     if not obj:
         raise HTTPException(status_code=404, detail="题目不存在")
     logger.info("[ai_tag_suggest:start] q_type=%s q_id=%s", q_type, question_id)
-    # #region agent log
-    _debug_log(
-        "api/questions.py:ai_tag_suggest_for_question:entry",
-        "ai tag suggest entry",
-        {"q_type": q_type, "question_id": question_id},
-        "H1",
-    )
-    # #endregion
 
     qa_text = _build_qa_text_for_tag_suggest(q_type, obj)
     qa_hash = hashlib.sha256(qa_text.encode("utf-8")).hexdigest()
     cache_key = f"{q_type}:{question_id}:{qa_hash}"
     cached = _AI_TAG_CACHE.get(cache_key)
     if cached and (time.time() - float(cached.get("ts", 0))) <= _AI_TAG_CACHE_TTL_SEC:
-        # #region agent log
-        _debug_log(
-            "api/questions.py:ai_tag_suggest_for_question:cache_hit",
-            "ai tag suggest cache hit",
-            {"cache_key_prefix": cache_key[:24], "cached_recommended_count": len(cached.get("recommended_tags", []))},
-            "H6",
-        )
-        # #endregion
         return {
             "question_type": q_type,
             "question_id": question_id,
@@ -916,23 +869,7 @@ async def ai_tag_suggest_for_question(
             "created_candidate_tags": 0,
             "cache_hit": True,
         }
-    # #region agent log
-    _debug_log(
-        "api/questions.py:ai_tag_suggest_for_question:qa_ready",
-        "qa text prepared",
-        {"qa_len": len(qa_text)},
-        "H2",
-    )
-    # #endregion
     recommended = extract_tags_from_qa_direct(qa_text, max_tags=5)
-    # #region agent log
-    _debug_log(
-        "api/questions.py:ai_tag_suggest_for_question:recommended_ready",
-        "recommended tags ready",
-        {"recommended_count": len(recommended), "recommended_preview": recommended[:5]},
-        "H3",
-    )
-    # #endregion
     if not recommended:
         logger.info(
             "[ai_tag_suggest:done] q_type=%s q_id=%s extracted=0 recommended=0 cost_ms=%s",
@@ -983,18 +920,6 @@ async def ai_tag_suggest_for_question(
         "ts": time.time(),
         "recommended_tags": list(recommended),
     }
-    # #region agent log
-    _debug_log(
-        "api/questions.py:ai_tag_suggest_for_question:exit",
-        "ai tag suggest exit",
-        {
-            "recommended_count": len(recommended),
-            "auto_applied_count": applied,
-            "total_elapsed_ms": int((time.time() - t0) * 1000),
-        },
-        "H4",
-    )
-    # #endregion
 
     return {
         "question_type": q_type,
