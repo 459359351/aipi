@@ -8,6 +8,8 @@ from typing import Optional, List, Tuple
 from sqlalchemy.orm import Session
 
 from ..models.document import Document
+from ..models.document_tag_rel import DocumentTagRel
+from ..models.father_tag import FatherTag
 from ..models.knowledge_point import KnowledgePoint
 from ..models.knowledge_tag_rel import knowledge_tag_rel
 from ..models.tag import Tag
@@ -224,6 +226,46 @@ def delete_document(db: Session, document_id: int) -> List[str]:
 
     logger.info(f"文档已删除: id={document_id}")
     return dify_ids
+
+
+def save_document_tags(
+    db: Session,
+    document_id: int,
+    father_tag_ids: List[int],
+    tag_ids: List[int],
+) -> None:
+    """保存文档与标签的多对多关联（先清除旧关联再写入）"""
+    db.query(DocumentTagRel).filter(DocumentTagRel.document_id == document_id).delete(
+        synchronize_session=False
+    )
+    for fid in father_tag_ids:
+        db.add(DocumentTagRel(document_id=document_id, father_tag_id=fid))
+    for tid in tag_ids:
+        db.add(DocumentTagRel(document_id=document_id, tag_id=tid))
+    db.commit()
+    logger.info(
+        f"文档标签关联已保存: document_id={document_id}, "
+        f"father_tags={len(father_tag_ids)}, sub_tags={len(tag_ids)}"
+    )
+
+
+def get_document_tags(db: Session, document_id: int) -> dict:
+    """获取文档关联的一级标签和二级标签"""
+    rels = db.query(DocumentTagRel).filter(DocumentTagRel.document_id == document_id).all()
+    father_tag_ids = [r.father_tag_id for r in rels if r.father_tag_id]
+    tag_ids = [r.tag_id for r in rels if r.tag_id]
+
+    father_tags = []
+    if father_tag_ids:
+        rows = db.query(FatherTag).filter(FatherTag.id.in_(father_tag_ids)).all()
+        father_tags = [{"id": int(r.id), "tag_name": r.tag_name} for r in rows]
+
+    sub_tags = []
+    if tag_ids:
+        rows = db.query(Tag).filter(Tag.id.in_(tag_ids)).all()
+        sub_tags = [{"id": int(r.id), "tag_name": r.tag_name} for r in rows]
+
+    return {"father_tags": father_tags, "sub_tags": sub_tags}
 
 
 # 允许通过 PUT 更新的元数据字段白名单

@@ -321,11 +321,7 @@
                         <h4 class="font-semibold text-gray-800">
                             ${index + 1}. ${escapeHtml(kp.title)}
                         </h4>
-                        ${kp.importance_score !== null ? `
-                            <span class="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded">
-                                重要度: ${(kp.importance_score * 100).toFixed(0)}%
-                            </span>
-                        ` : ''}
+                        ${''}<!-- 重要度隐藏，数据仍在后端存储 -->
                     </div>
                     ${kp.summary ? `
                         <p class="text-sm text-gray-600 mb-2">📝 ${escapeHtml(kp.summary)}</p>
@@ -342,14 +338,7 @@
                     ` : ''}
                     <div class="flex items-center justify-between text-xs text-gray-500 mt-2 pt-2 border-t">
                         <span>创建时间: ${formatDateTime(kp.created_at)}</span>
-                        ${kp.dify_sync_status ? `
-                            <span class="px-2 py-1 rounded ${kp.dify_sync_status === 'synced' ? 'bg-green-100 text-green-700' :
-                        kp.dify_sync_status === 'failed' ? 'bg-red-100 text-red-700' :
-                            'bg-yellow-100 text-yellow-700'
-                    }">
-                                Dify: ${kp.dify_sync_status}
-                            </span>
-                        ` : ''}
+                        ${''}<!-- Dify 同步状态隐藏，数据仍在后端存储 -->
                     </div>
                 </div>
             `).join('');

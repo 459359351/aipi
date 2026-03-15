@@ -128,13 +128,20 @@
                         <div class="flex items-start justify-between">
                             <div class="flex-1">
                                 <h3 class="text-lg font-semibold text-gray-800 mb-2">${escapeHtml(doc.doc_name)}</h3>
-                                <div class="grid grid-cols-2 gap-4 text-sm text-gray-600">
-                                    <div><span class="font-medium">一级标签:</span> ${doc.doc_type || '-'}</div>
-                                    <div><span class="font-medium">二级标签:</span> ${doc.business_domain || '-'}</div>
-                                    <div><span class="font-medium">组织维度:</span> ${doc.org_dimension || '-'}</div>
-                                    <div><span class="font-medium">版本:</span> ${doc.version || '-'}</div>
-                                    <div><span class="font-medium">文件大小:</span> ${formatFileSize(doc.file_size)}</div>
-                                    <div><span class="font-medium">格式:</span> ${doc.file_format?.toUpperCase() || '-'}</div>
+                                <div class="space-y-2 text-sm text-gray-600">
+                                    <div class="flex flex-wrap items-center gap-1">
+                                        <span class="font-medium shrink-0 mr-1">一级标签:</span>
+                                        ${renderTagPills(doc.father_tags, doc.doc_type, 'bg-blue-100 text-blue-700')}
+                                    </div>
+                                    <div class="flex flex-wrap items-center gap-1">
+                                        <span class="font-medium shrink-0 mr-1">二级标签:</span>
+                                        ${renderTagPills(doc.sub_tags, doc.business_domain, 'bg-green-100 text-green-700')}
+                                    </div>
+                                    <div class="grid grid-cols-3 gap-4">
+                                        <div><span class="font-medium">版本:</span> ${doc.version || '-'}</div>
+                                        <div><span class="font-medium">文件大小:</span> ${formatFileSize(doc.file_size)}</div>
+                                        <div><span class="font-medium">格式:</span> ${doc.file_format?.toUpperCase() || '-'}</div>
+                                    </div>
                                 </div>
                             </div>
                             <div class="ml-4 flex flex-col items-end space-y-2">
@@ -156,6 +163,20 @@
                     </div>
                 </div>
             `).join('');
+        }
+
+        function renderTagPills(tags, fallback, colorClass) {
+            // tags: [{id, tag_name}, ...] 或 undefined
+            if (tags && tags.length > 0) {
+                return tags.map(t =>
+                    `<span class="inline-block px-2 py-0.5 rounded-full text-xs ${colorClass}">${escapeHtml(t.tag_name)}</span>`
+                ).join('');
+            }
+            // 兼容旧数据：使用 doc_type / business_domain 字段
+            if (fallback) {
+                return `<span class="inline-block px-2 py-0.5 rounded-full text-xs ${colorClass}">${escapeHtml(fallback)}</span>`;
+            }
+            return '<span class="text-gray-400">-</span>';
         }
 
         function getStatusBadge(status) {
