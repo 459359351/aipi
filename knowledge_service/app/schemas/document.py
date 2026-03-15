@@ -34,6 +34,12 @@ class DocumentUpdateRequest(BaseModel):
 
 # ── 响应模型 ──────────────────────────────────────────────
 
+class TagInfo(BaseModel):
+    """标签简要信息"""
+    id: int
+    tag_name: str
+
+
 class DocumentResponse(BaseModel):
     """文档详情响应"""
     id: int
@@ -54,6 +60,8 @@ class DocumentResponse(BaseModel):
     upload_time: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    father_tags: List[TagInfo] = []
+    sub_tags: List[TagInfo] = []
 
     model_config = {"from_attributes": True}
 

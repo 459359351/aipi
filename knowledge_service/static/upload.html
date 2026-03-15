@@ -6,6 +6,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>文档上传 - 知识处理服务</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 多选下拉面板 */
+        .multi-select-wrapper { position: relative; }
+        .multi-select-trigger {
+            display: flex; flex-wrap: wrap; gap: 4px; min-height: 42px;
+            padding: 6px 10px; cursor: pointer; align-items: center;
+        }
+        .multi-select-trigger.empty::after {
+            content: attr(data-placeholder); color: #9ca3af; font-size: 14px;
+        }
+        .tag-pill {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 2px 8px; background: #dbeafe; color: #1d4ed8;
+            border-radius: 9999px; font-size: 12px; white-space: nowrap;
+        }
+        .tag-pill .remove { cursor: pointer; font-weight: bold; }
+        .tag-pill .remove:hover { color: #dc2626; }
+        .multi-select-panel {
+            position: absolute; top: 100%; left: 0; right: 0; z-index: 50;
+            max-height: 220px; overflow-y: auto;
+            background: white; border: 1px solid #d1d5db; border-top: none;
+            border-radius: 0 0 6px 6px; box-shadow: 0 4px 6px rgba(0,0,0,.1);
+            display: none;
+        }
+        .multi-select-panel.open { display: block; }
+        .multi-select-panel label {
+            display: flex; align-items: center; gap: 8px;
+            padding: 8px 12px; cursor: pointer; font-size: 14px;
+        }
+        .multi-select-panel label:hover { background: #f3f4f6; }
+    </style>
 </head>
 
 <body class="bg-gray-50">
@@ -54,25 +85,43 @@
                             class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
 
-                    <!-- 两列布局 -->
-                    <div class="grid grid-cols-2 gap-4">
-                        <!-- 一级标签 -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">一级标签</label>
-                            <select id="docType" onchange="onFatherTagChange()"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <option value="">加载中...</option>
-                            </select>
+                    <!-- 一级标签（多选） -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">一级标签（可多选）</label>
+                        <div class="multi-select-wrapper" id="fatherTagWrapper">
+                            <div class="multi-select-trigger border border-gray-300 rounded-md empty"
+                                 id="fatherTagTrigger" data-placeholder="点击选择一级标签..." onclick="togglePanel('fatherTag')">
+                            </div>
+                            <div class="multi-select-panel" id="fatherTagPanel">
+                                <div class="p-3 text-sm text-gray-400">加载中...</div>
+                            </div>
                         </div>
+                    </div>
 
-                        <!-- 二级标签 -->
+                    <!-- 二级标签（多选） -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">二级标签（可多选，根据所选一级标签筛选）</label>
+                        <div class="multi-select-wrapper" id="subTagWrapper">
+                            <div class="multi-select-trigger border border-gray-300 rounded-md empty"
+                                 id="subTagTrigger" data-placeholder="请先选择一级标签" onclick="togglePanel('subTag')">
+                            </div>
+                            <div class="multi-select-panel" id="subTagPanel">
+                                <div class="p-3 text-sm text-gray-400">请先选择一级标签</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 版本号 & 生效日期 -->
+                    <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">二级标签</label>
-                            <select id="businessDomain"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                disabled>
-                                <option value="">请先选择一级标签</option>
-                            </select>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">版本号</label>
+                            <input type="text" id="version" placeholder="如：v1.0"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">生效日期</label>
+                            <input type="date" id="effectiveDate"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                         </div>
                     </div>
 
@@ -83,22 +132,6 @@
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-2">组织维度</label>
                             <input type="text" id="orgDimension" placeholder="如：总部机关 / 分公司党支部 / 项目党支部"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        </div>
-
-                        <!-- 版本号 -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">版本号</label>
-                            <input type="text" id="version" placeholder="如：v1.0"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-4">
-                        <!-- 生效日期 -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">生效日期</label>
-                            <input type="date" id="effectiveDate"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                         </div>
 
@@ -156,53 +189,192 @@
     </div>
 
     <script>
+        // ── 多选标签状态 ──────────────────────────────────────
+        let allFatherTags = [];          // [{id, tag_name, sub_tag_count}]
+        let selectedFatherTagIds = [];   // [id, ...]
+        let allSubTags = [];             // [{id, tag_name, _fatherTag}]  按所选一级标签聚合
+        let selectedSubTagIds = [];      // [id, ...]
+
+        // ── 初始化加载一级标签 ────────────────────────────────
         async function loadFatherTags() {
-            const select = document.getElementById('docType');
             try {
                 const r = await fetch('/api/v1/tags/father-tags');
                 const data = await r.json();
-                select.innerHTML = '<option value="">请选择</option>';
-                (data.items || []).forEach(t => {
-                    const opt = document.createElement('option');
-                    opt.value = t.tag_name;
-                    opt.textContent = t.tag_name;
-                    select.appendChild(opt);
-                });
+                allFatherTags = data.items || [];
+                renderFatherTagPanel();
             } catch {
-                select.innerHTML = '<option value="">加载失败，请刷新</option>';
+                document.getElementById('fatherTagPanel').innerHTML =
+                    '<div class="p-3 text-sm text-red-500">加载失败，请刷新</div>';
             }
         }
 
-        async function onFatherTagChange() {
-            const fatherTag = document.getElementById('docType').value;
-            const subSelect = document.getElementById('businessDomain');
+        function renderFatherTagPanel() {
+            const panel = document.getElementById('fatherTagPanel');
+            if (allFatherTags.length === 0) {
+                panel.innerHTML = '<div class="p-3 text-sm text-gray-400">暂无一级标签</div>';
+                return;
+            }
+            panel.innerHTML = allFatherTags.map(t => `
+                <label>
+                    <input type="checkbox" value="${t.id}" data-name="${escapeAttr(t.tag_name)}"
+                           onchange="onFatherTagToggle(this)" ${selectedFatherTagIds.includes(t.id) ? 'checked' : ''}>
+                    <span>${escapeHtml(t.tag_name)}</span>
+                    <span class="text-xs text-gray-400 ml-auto">(${t.sub_tag_count || 0})</span>
+                </label>
+            `).join('');
+        }
 
-            if (!fatherTag) {
-                subSelect.innerHTML = '<option value="">请先选择一级标签</option>';
-                subSelect.disabled = true;
+        function onFatherTagToggle(checkbox) {
+            const id = parseInt(checkbox.value);
+            if (checkbox.checked) {
+                if (!selectedFatherTagIds.includes(id)) selectedFatherTagIds.push(id);
+            } else {
+                selectedFatherTagIds = selectedFatherTagIds.filter(v => v !== id);
+            }
+            renderFatherTagTrigger();
+            loadSubTagsForSelected();
+        }
+
+        function removeFatherTag(id) {
+            selectedFatherTagIds = selectedFatherTagIds.filter(v => v !== id);
+            renderFatherTagPanel();
+            renderFatherTagTrigger();
+            loadSubTagsForSelected();
+        }
+
+        function renderFatherTagTrigger() {
+            const trigger = document.getElementById('fatherTagTrigger');
+            if (selectedFatherTagIds.length === 0) {
+                trigger.innerHTML = '';
+                trigger.classList.add('empty');
+                return;
+            }
+            trigger.classList.remove('empty');
+            trigger.innerHTML = selectedFatherTagIds.map(id => {
+                const t = allFatherTags.find(f => f.id === id);
+                return t ? `<span class="tag-pill">${escapeHtml(t.tag_name)}<span class="remove" onclick="event.stopPropagation();removeFatherTag(${id})">x</span></span>` : '';
+            }).join('');
+        }
+
+        // ── 加载二级标签（合并所有已选一级标签下的） ──────────
+        async function loadSubTagsForSelected() {
+            const panel = document.getElementById('subTagPanel');
+            const trigger = document.getElementById('subTagTrigger');
+
+            // 清除不属于当前一级标签的已选二级标签
+            if (selectedFatherTagIds.length === 0) {
+                allSubTags = [];
+                selectedSubTagIds = [];
+                panel.innerHTML = '<div class="p-3 text-sm text-gray-400">请先选择一级标签</div>';
+                trigger.innerHTML = '';
+                trigger.classList.add('empty');
+                trigger.setAttribute('data-placeholder', '请先选择一级标签');
                 return;
             }
 
-            subSelect.innerHTML = '<option value="">加载中...</option>';
-            subSelect.disabled = true;
+            trigger.setAttribute('data-placeholder', '加载中...');
+            panel.innerHTML = '<div class="p-3 text-sm text-gray-400">加载中...</div>';
+
             try {
-                const r = await fetch(`/api/v1/tags/sub-tags?father_tag=${encodeURIComponent(fatherTag)}`);
-                const data = await r.json();
-                subSelect.innerHTML = '<option value="">请选择</option>';
-                (data.items || []).forEach(t => {
-                    const opt = document.createElement('option');
-                    opt.value = t.tag_name;
-                    opt.textContent = t.tag_name;
-                    subSelect.appendChild(opt);
+                const fatherNames = selectedFatherTagIds.map(id => {
+                    const t = allFatherTags.find(f => f.id === id);
+                    return t ? t.tag_name : '';
+                }).filter(Boolean);
+
+                // 并发请求所有选中一级标签的子标签
+                const results = await Promise.all(
+                    fatherNames.map(name =>
+                        fetch(`/api/v1/tags/sub-tags?father_tag=${encodeURIComponent(name)}`)
+                            .then(r => r.json())
+                            .then(data => (data.items || []).map(t => ({ ...t, _fatherTag: name })))
+                    )
+                );
+
+                // 去重合并（同一个二级标签可能属于多个一级标签）
+                const merged = new Map();
+                results.flat().forEach(t => {
+                    if (!merged.has(t.id)) merged.set(t.id, t);
                 });
-                subSelect.disabled = false;
+                allSubTags = Array.from(merged.values());
+
+                // 移除已选但不在当前列表中的二级标签
+                const validIds = new Set(allSubTags.map(t => t.id));
+                selectedSubTagIds = selectedSubTagIds.filter(id => validIds.has(id));
+
+                renderSubTagPanel();
+                renderSubTagTrigger();
             } catch {
-                subSelect.innerHTML = '<option value="">加载失败</option>';
+                panel.innerHTML = '<div class="p-3 text-sm text-red-500">加载失败</div>';
             }
         }
 
+        function renderSubTagPanel() {
+            const panel = document.getElementById('subTagPanel');
+            if (allSubTags.length === 0) {
+                panel.innerHTML = '<div class="p-3 text-sm text-gray-400">当前一级标签下暂无二级标签</div>';
+                return;
+            }
+            panel.innerHTML = allSubTags.map(t => `
+                <label>
+                    <input type="checkbox" value="${t.id}" data-name="${escapeAttr(t.tag_name)}"
+                           onchange="onSubTagToggle(this)" ${selectedSubTagIds.includes(t.id) ? 'checked' : ''}>
+                    <span>${escapeHtml(t.tag_name)}</span>
+                    <span class="text-xs text-gray-400 ml-auto">${escapeHtml(t._fatherTag)}</span>
+                </label>
+            `).join('');
+        }
+
+        function onSubTagToggle(checkbox) {
+            const id = parseInt(checkbox.value);
+            if (checkbox.checked) {
+                if (!selectedSubTagIds.includes(id)) selectedSubTagIds.push(id);
+            } else {
+                selectedSubTagIds = selectedSubTagIds.filter(v => v !== id);
+            }
+            renderSubTagTrigger();
+        }
+
+        function removeSubTag(id) {
+            selectedSubTagIds = selectedSubTagIds.filter(v => v !== id);
+            renderSubTagPanel();
+            renderSubTagTrigger();
+        }
+
+        function renderSubTagTrigger() {
+            const trigger = document.getElementById('subTagTrigger');
+            if (selectedSubTagIds.length === 0) {
+                trigger.innerHTML = '';
+                trigger.classList.add('empty');
+                trigger.setAttribute('data-placeholder', selectedFatherTagIds.length ? '点击选择二级标签...' : '请先选择一级标签');
+                return;
+            }
+            trigger.classList.remove('empty');
+            trigger.innerHTML = selectedSubTagIds.map(id => {
+                const t = allSubTags.find(s => s.id === id);
+                return t ? `<span class="tag-pill">${escapeHtml(t.tag_name)}<span class="remove" onclick="event.stopPropagation();removeSubTag(${id})">x</span></span>` : '';
+            }).join('');
+        }
+
+        // ── 面板开关 ─────────────────────────────────────────
+        function togglePanel(type) {
+            const panel = document.getElementById(type === 'fatherTag' ? 'fatherTagPanel' : 'subTagPanel');
+            const isOpen = panel.classList.contains('open');
+            // 关闭所有面板
+            document.querySelectorAll('.multi-select-panel').forEach(p => p.classList.remove('open'));
+            if (!isOpen) panel.classList.add('open');
+        }
+
+        // 点击外部关闭面板
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.multi-select-wrapper')) {
+                document.querySelectorAll('.multi-select-panel').forEach(p => p.classList.remove('open'));
+            }
+        });
+
+        // ── 初始化 ───────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', loadFatherTags);
 
+        // ── 表单提交 ─────────────────────────────────────────
         const form = document.getElementById('uploadForm');
         const submitBtn = document.getElementById('submitBtn');
         const progressContainer = document.getElementById('progressContainer');
@@ -227,20 +399,28 @@
             formData.append('file', file);
             formData.append('doc_name', document.getElementById('docName').value);
 
-            const docType = document.getElementById('docType').value;
-            if (docType) formData.append('doc_type', docType);
-
-            const businessDomain = document.getElementById('businessDomain').value;
-            if (businessDomain) formData.append('business_domain', businessDomain);
-
-            const orgDimension = document.getElementById('orgDimension').value;
-            if (orgDimension) formData.append('org_dimension', orgDimension);
+            // 多选标签 —— 以 JSON 数组发送
+            if (selectedFatherTagIds.length > 0) {
+                formData.append('father_tag_ids', JSON.stringify(selectedFatherTagIds));
+                // 兼容旧字段：取第一个一级标签名
+                const firstName = allFatherTags.find(f => f.id === selectedFatherTagIds[0])?.tag_name || '';
+                if (firstName) formData.append('doc_type', firstName);
+            }
+            if (selectedSubTagIds.length > 0) {
+                formData.append('tag_ids', JSON.stringify(selectedSubTagIds));
+                // 兼容旧字段：取第一个二级标签名
+                const firstName = allSubTags.find(s => s.id === selectedSubTagIds[0])?.tag_name || '';
+                if (firstName) formData.append('business_domain', firstName);
+            }
 
             const version = document.getElementById('version').value;
             if (version) formData.append('version', version);
 
             const effectiveDate = document.getElementById('effectiveDate').value;
             if (effectiveDate) formData.append('effective_date', effectiveDate);
+
+            const orgDimension = document.getElementById('orgDimension').value;
+            if (orgDimension) formData.append('org_dimension', orgDimension);
 
             formData.append('security_level', document.getElementById('securityLevel').value);
 
@@ -261,15 +441,15 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    showResult(`✅ 上传成功！文档 ID: ${data.id}<br>状态: ${data.status}<br>${data.message}`, 'success');
+                    showResult(`上传成功！文档 ID: ${data.id}<br>状态: ${data.status}<br>${data.message}`, 'success');
                     setTimeout(() => {
                         window.location.href = '/static/list.html';
                     }, 2000);
                 } else {
-                    showResult(`❌ 上传失败: ${data.detail || '未知错误'}`, 'error');
+                    showResult(`上传失败: ${data.detail || '未知错误'}`, 'error');
                 }
             } catch (error) {
-                showResult(`❌ 网络错误: ${error.message}`, 'error');
+                showResult(`网络错误: ${error.message}`, 'error');
             } finally {
                 progressContainer.classList.add('hidden');
                 submitBtn.disabled = false;
@@ -289,7 +469,24 @@
 
         function resetForm() {
             form.reset();
+            selectedFatherTagIds = [];
+            selectedSubTagIds = [];
+            allSubTags = [];
+            renderFatherTagPanel();
+            renderFatherTagTrigger();
+            renderSubTagPanel();
+            renderSubTagTrigger();
             resultContainer.classList.add('hidden');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function escapeAttr(text) {
+            return String(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
     </script>
 </body>

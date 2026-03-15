@@ -4,6 +4,7 @@
 
 import hashlib
 import io
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -11,7 +12,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, BackgroundTasks, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 
 from ..database import get_db
 from ..schemas.document import (
@@ -37,8 +38,10 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="上传的文件（PDF/Word/TXT）"),
     doc_name: str = Form(..., description="文档名称"),
-    doc_type: Optional[str] = Form(None, description="文档类型"),
-    business_domain: Optional[str] = Form(None, description="业务领域"),
+    doc_type: Optional[str] = Form(None, description="文档类型（兼容旧字段）"),
+    business_domain: Optional[str] = Form(None, description="业务领域（兼容旧字段）"),
+    father_tag_ids: Optional[str] = Form(None, description="一级标签ID数组 JSON，如 [1,2]"),
+    tag_ids: Optional[str] = Form(None, description="二级标签ID数组 JSON，如 [3,5]"),
     org_dimension: Optional[str] = Form(None, description="组织维度"),
     version: Optional[str] = Form(None, description="版本号"),
     effective_date: Optional[str] = Form(None, description="生效日期 (YYYY-MM-DD)"),
@@ -95,6 +98,22 @@ async def upload_document(
         upload_time=now,
     )
 
+    # ── Step 1.5: 保存文档-标签多对多关联 ─────────────────
+    parsed_father_tag_ids: List[int] = []
+    parsed_tag_ids: List[int] = []
+    try:
+        if father_tag_ids:
+            parsed_father_tag_ids = json.loads(father_tag_ids)
+        if tag_ids:
+            parsed_tag_ids = json.loads(tag_ids)
+    except (json.JSONDecodeError, TypeError):
+        raise HTTPException(status_code=400, detail="father_tag_ids / tag_ids 应为 JSON 数组，如 [1,2]")
+
+    if parsed_father_tag_ids or parsed_tag_ids:
+        document_service.save_document_tags(
+            db, doc.id, parsed_father_tag_ids, parsed_tag_ids
+        )
+
     # ── Step 2: 上传文件到 MinIO ──────────────────────────
     try:
         content_type = file.content_type or "application/octet-stream"
@@ -136,7 +155,14 @@ async def list_documents(
 ):
     """分页获取文档列表，支持按状态筛选"""
     docs, total = document_service.get_documents_list(db, skip=skip, limit=limit, status=status)
-    return DocumentListResponse(total=total, items=docs)
+    items = []
+    for doc in docs:
+        resp = DocumentResponse.model_validate(doc)
+        tags = document_service.get_document_tags(db, doc.id)
+        resp.father_tags = tags["father_tags"]
+        resp.sub_tags = tags["sub_tags"]
+        items.append(resp)
+    return DocumentListResponse(total=total, items=items)
 
 
 @router.get("/{document_id}", response_model=DocumentResponse, summary="查询文档详情")
@@ -145,7 +171,11 @@ async def get_document(document_id: int, db: Session = Depends(get_db)):
     doc = document_service.get_document_by_id(db, document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
-    return doc
+    resp = DocumentResponse.model_validate(doc)
+    tags = document_service.get_document_tags(db, document_id)
+    resp.father_tags = tags["father_tags"]
+    resp.sub_tags = tags["sub_tags"]
+    return resp
 
 
 @router.post("/{document_id}/reparse", response_model=DocumentUploadResponse, summary="重新解析文档")

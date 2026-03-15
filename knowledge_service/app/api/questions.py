@@ -896,8 +896,22 @@ async def ai_tag_suggest_for_question(
     logger.info("[ai_tag_suggest:start] q_type=%s q_id=%s", q_type, question_id)
 
     qa_text = _build_qa_text_for_tag_suggest(q_type, obj)
+
+    # ── 根据 father_tag 查询候选二级标签 ──────────────────
+    father_tag_name = (body or {}).get("father_tag") or ""
+    candidate_tags = None
+    if father_tag_name:
+        sub_tags = (
+            db.query(Tag)
+            .filter(func.find_in_set(father_tag_name, Tag.father_tag) > 0, Tag.is_enabled == 1)
+            .all()
+        )
+        if sub_tags:
+            candidate_tags = [t.tag_name for t in sub_tags]
+
     qa_hash = hashlib.sha256(qa_text.encode("utf-8")).hexdigest()
-    cache_key = f"{q_type}:{question_id}:{qa_hash}"
+    ft_hash = hashlib.sha256(father_tag_name.encode("utf-8")).hexdigest() if father_tag_name else "none"
+    cache_key = f"{q_type}:{question_id}:{qa_hash}:{ft_hash}"
     cached = _AI_TAG_CACHE.get(cache_key)
     if cached and (time.time() - float(cached.get("ts", 0))) <= _AI_TAG_CACHE_TTL_SEC:
         return {
@@ -910,7 +924,7 @@ async def ai_tag_suggest_for_question(
             "created_candidate_tags": 0,
             "cache_hit": True,
         }
-    recommended = extract_tags_from_qa_direct(qa_text, max_tags=5)
+    recommended = extract_tags_from_qa_direct(qa_text, max_tags=5, candidate_tags=candidate_tags)
     if not recommended:
         logger.info(
             "[ai_tag_suggest:done] q_type=%s q_id=%s extracted=0 recommended=0 cost_ms=%s",
