@@ -1,7 +1,7 @@
 # 考试平台 AI 知识处理服务 — 设计文档
 
-> 版本：v1.0
-> 最后更新：2026-03-12
+> 版本：v1.1
+> 最后更新：2026-03-15
 > 状态：已实现
 
 ---
@@ -110,13 +110,15 @@ sequenceDiagram
 | --------------- | ------ | --- | ------------------- |
 | file            | File   | 是   | 上传的文件（PDF/Word/TXT） |
 | doc_name        | string | 是   | 文档名称                |
-| doc_type        | string | 否   | 文档类型                |
-| business_domain | string | 否   | 业务领域                |
+| doc_type        | string | 否   | 文档类型（向后兼容，前端仍传首个一级标签名） |
+| business_domain | string | 否   | 业务领域（向后兼容，前端仍传首个二级标签名） |
 | org_dimension   | string | 否   | 组织维度                |
 | version         | string | 否   | 版本号                 |
 | effective_date  | string | 否   | 生效日期（YYYY-MM-DD）    |
 | security_level  | string | 否   | 安全等级，默认 internal    |
 | upload_user     | string | 否   | 上传用户标识              |
+| father_tag_ids  | string | 否   | 一级标签 ID 数组的 JSON 字符串，如 `"[1,3]"` |
+| tag_ids         | string | 否   | 二级标签 ID 数组的 JSON 字符串，如 `"[5,8,12]"` |
 
 
 **MinIO 存储规则**：对象键格式为 `{年}/{月}/{uuid}_{原始文件名}`，如 `2026/02/a1b2c3d4_党建考核办法.pdf`。
@@ -419,6 +421,20 @@ stateDiagram-v2
 | tag_id       | BIGINT | PK, FK(tags.id)             | 标签 ID，级联删除  |
 
 
+#### 3.1.5 documents_tags_rel（文档-标签多对多关联表）
+
+文档上传时可选择多个一级标签和二级标签，通过 `documents_tags_rel` 表建立文档与标签的多对多关联。每行关联一个一级标签（`father_tag_id`）或一个二级标签（`tag_id`），两个外键互斥（只能有一个非空）。
+
+| 字段            | 类型       | 约束                                         | 说明            |
+| ------------- | -------- | ------------------------------------------ | ------------- |
+| id            | BIGINT   | PK, AUTO_INCREMENT                         | 主键            |
+| document_id   | BIGINT   | NOT NULL, FK(documents.id), INDEX          | 文档 ID，级联删除    |
+| father_tag_id | BIGINT   | NULL, FK(father_tags.id), INDEX            | 一级标签 ID，级联删除  |
+| tag_id        | BIGINT   | NULL, FK(tags.id), INDEX                   | 二级标签 ID，级联删除  |
+| created_at    | DATETIME | NOT NULL, DEFAULT CURRENT_TIMESTAMP        | 创建时间          |
+
+**写入策略**：上传文档时，后端解析 `father_tag_ids` / `tag_ids` JSON 数组，先清除旧关联再逐条写入。文档列表/详情接口自动查询此表，返回 `father_tags` 和 `sub_tags` 字段。
+
 ### 3.2 题型表与出题任务表
 
 #### 3.2.1 已有题型表扩展
@@ -603,6 +619,7 @@ stateDiagram-v2
 | `migrate_tb_questions.sql` | 为正式题库表 tb_single_choices / tb_multiple_choices / tb_judges / tb_essays 添加 document_id/task_id/review_status/is_ai_generated 列及索引 | 启用 AI 出题写入 tb_* 前 |
 | `migrate_tag_system.sql` | 创建 `question_tag_rel` 并初始化一批党建领域预设标签（domain/knowledge_type/difficulty） | 启用标签驱动推荐前 |
 | `migrate_father_tags.sql` | 创建 `father_tags` 表；为 `tags` 表添加 `father_tag` VARCHAR(128) 和 `is_enabled` SMALLINT 列及索引 | 启用一级标签分类前 |
+| `migrate_documents_tags_rel.sql` | 创建 `documents_tags_rel` 文档-标签多对多关联表（含外键和索引） | 启用文档多标签选择前 |
 
 
 > 两个脚本均需使用具有 CREATE / ALTER 权限的 MySQL 账号手动执行，应用层 `aipi_user` 通常无此权限。
@@ -631,7 +648,7 @@ stateDiagram-v2
 
 #### POST /upload — 上传文档
 
-**请求**：`multipart/form-data`，包含 file 和元数据表单字段（见 2.1 节）。
+**请求**：`multipart/form-data`，包含 file 和元数据表单字段（见 2.1 节）。上传时可通过 `father_tag_ids` 和 `tag_ids`（JSON 字符串）关联多个一级/二级标签，关联关系写入 `documents_tags_rel` 表。
 
 **响应**（200）：
 
@@ -663,9 +680,20 @@ stateDiagram-v2
 ```json
 {
   "total": 12,
-  "items": [ ... ]
+  "items": [
+    {
+      "id": 9,
+      "doc_name": "党建考核管理办法",
+      "status": "completed",
+      "father_tags": [{"id": 1, "tag_name": "CI工作"}],
+      "sub_tags": [{"id": 5, "tag_name": "组织建设"}, {"id": 8, "tag_name": "考核评分"}],
+      "..."
+    }
+  ]
 }
 ```
+
+> `father_tags` 和 `sub_tags` 通过 `documents_tags_rel` 表查询得到。对于未关联标签的旧文档，这两个字段为空数组，前端会回退显示 `doc_type` / `business_domain` 字段值。
 
 #### PUT /{document_id} — 更新元数据
 
@@ -1203,7 +1231,7 @@ for q, item in pairs:
 
 - `static/generate.html` — **AI 出题调试页**，通过 `/static/generate.html` 访问；
 - `static/practice.html` — **模拟答题页**，通过 `/static/practice.html` 访问，用于答题与错题推荐；
-- `static/recommend-admin.html` — **题目审核页**，通过 `/static/recommend-admin.html` 访问，用于逐题审核、AI 推荐标签、一级标签选择与审核提交。审核区域采用左右两栏布局：左栏为标签推荐与题目编辑，右栏为文档原文预览（通过 iframe 加载 `render-html` 端点），方便对照验证题目内容。未审核题目列表支持分页（每页 10 条）。
+- `static/recommend-admin.html` — **题目审核页**，通过 `/static/recommend-admin.html` 访问，用于逐题审核、AI 推荐标签、一级标签选择与审核提交。审核区域采用左右两栏布局：左栏为标签推荐与题目编辑，右栏为文档原文预览（通过 iframe 加载 `render-html` 端点），方便对照验证题目内容。未审核题目列表支持分页（每页 10 条）。AI 推荐标签基于所选一级标签下的二级标签范围约束推荐 3~5 个（搜索已有标签和手工添加标签区域已隐藏）。
 - `static/tags.html` — **标签管理页**，通过 `/static/tags.html` 访问，用于维护预设标签与查看候选标签（tag_type=candidate）。
 
 `generate.html` 的主要模块：
@@ -1241,7 +1269,7 @@ flowchart LR
 | -------- | -------------------------------------------------------------------------------------------- |
 | 题目筛选     | 按题型（单选/多选/判断/简答）和关键字筛选未审核题目，分页展示（每页 10 条）                                                    |
 | 逐题审核     | 点击审核按钮加载题目详情，进入左右两栏布局                                                                        |
-| 左栏：标签推荐  | 一级标签选择 → AI 推荐标签（手动触发） → 搜索已有标签 → 手工添加标签 → 待提交标签池                                           |
+| 左栏：标签推荐  | 一级标签选择 → AI 推荐标签（手动触发，基于所选一级标签下的二级标签约束推荐 3~5 个） → 待提交标签池                                           |
 | 左栏：题目编辑  | 题干/选项/答案/解析/分值编辑，「审核提交通过」一步完成标签写入+题目通过                                                        |
 | 右栏：文档预览  | 根据题目的 `document_id` 通过 iframe 加载 `GET /documents/{id}/render-html`，展示文档原文（DOCX → HTML），方便对照验证 |
 | 人工题关联建设  | 一键触发 `POST /recommendations/build-manual-knowledge-rel`，为 document_id 为空的人工题批量生成知识点关联        |
@@ -1263,6 +1291,7 @@ knowledge_service/
 │   │   ├── tag.py                   # tags 表
 │   │   ├── father_tag.py            # father_tags 一级标签表
 │   │   ├── knowledge_tag_rel.py     # knowledge_tag_rel 关联表（知识点-标签）
+│   │   ├── document_tag_rel.py      # documents_tags_rel 关联表（文档-标签多对多）
 │   │   ├── question_tag_rel.py      # question_tag_rel 关联表（题目-标签）
 │   │   ├── question.py              # tb_* 题型表 + question_tasks 表（历史 ai_tb_* 表仍保留以兼容旧系统）
 │   │   ├── question_knowledge_rel.py# question_knowledge_rel 题目-知识点关联表
@@ -1281,7 +1310,7 @@ knowledge_service/
 │   │   ├── tags.py                  # 标签管理端点（CRUD/一级标签/二级标签）
 │   │   └── recommendations.py       # 题目推荐与题目-知识点关联管理端点
 │   ├── services/                    # 业务服务层
-│   │   ├── document_service.py      # 文档 CRUD、知识点存储、级联删除
+│   │   ├── document_service.py      # 文档 CRUD、知识点存储、级联删除、文档标签关联管理
 │   │   ├── minio_service.py         # MinIO 文件上传/下载/删除
 │   │   ├── parser_service.py        # 文档解析（PDF/Word/TXT）
 │   │   ├── knowledge_extractor.py   # LLM 知识点抽取（Prompt + JSON 容错）
@@ -1306,6 +1335,7 @@ knowledge_service/
 ├── init_tables.sql                  # 初始建表脚本（documents/knowledge_points/tags/rel）
 ├── migrate_questions.sql            # 历史出题功能迁移脚本（ai_tb_* 扩展 + question_tasks）
 ├── migrate_father_tags.sql          # 一级标签迁移脚本（father_tags 表 + tags 表扩展字段）
+├── migrate_documents_tags_rel.sql   # 文档-标签多对多关联表迁移脚本
 ├── requirements.txt                 # Python 依赖
 ├── .env.example                     # 环境变量模板
 ├── start.sh                         # 一键启动脚本
@@ -1536,6 +1566,11 @@ flowchart TD
 - `ai-tag-suggest` 返回口径升级：
   - 主字段：`recommended_tags`（直接提炼的推荐标签，去重后最多 5 个）
   - 兼容字段：`suggested_tags`（短期与 `recommended_tags` 保持一致），`new_tag_candidates=[]`
+- `ai-tag-suggest` 支持 `father_tag` 参数：
+  - 请求体可携带 `father_tag`（一级标签名称），后端据此查询该一级标签下所有可用二级标签（`is_enabled=1`，`FIND_IN_SET` 匹配）
+  - 当有候选标签时，使用约束 Prompt 强制 AI **仅从候选列表中选择 3~5 个标签**，按相关度从高到低排列
+  - 不允许 AI 凭空创造候选列表之外的新标签；若候选标签总数不足 3 个则全部选择
+  - 无 `father_tag` 时使用原有无约束 Prompt（向后兼容）
 - AI 推荐标签与人工自定义标签统一加入前端「待提交标签池」（仅存于浏览器内存，不即时写库）
 - 最终审核提交时，后端通过 `_resolve_or_create_tag` 统一处理标签落库（已存在则复用，不存在则创建），同时写入 `question_tag_rel`（`is_confirmed=1`），并携带 `father_tag` 信息同步维护 `father_tags.sub_tag_count`
 - 新增未审核题目列表接口：`GET /api/v1/questions/audit/pending`
@@ -1570,13 +1605,14 @@ flowchart TD
   - **左右两栏布局**：选中题目后，左栏显示标签推荐与题目编辑，右栏通过 iframe 加载文档原文（`GET /documents/{id}/render-html`），方便对照验证
     - 有 `document_id` 时自动加载文档 HTML 预览（sticky 定位，随左栏滚动固定）
     - 无 `document_id`（人工导入题目）时显示占位提示
-  - 标签操作支持：推荐标签增删、按关键字搜索 `tags` 加入、手工新增标签（同名去重）
-  - 新增一级标签选择：动态查询 `father_tags` 表填充下拉选项，AI 推荐/手动添加/审核提交均需先选择一级标签
-  - 审核页采用「三来源统一标签池」：
-    - 来源 A：AI 推荐标签（点击加入）
-    - 来源 B：系统内标签搜索并选择（关键词模糊检索）
-    - 来源 C：手工新增标签（单条输入、单条保存）
-  - 三来源”点击加入”仅写入浏览器内存（`pendingTagNames`），不即时调用后端 API；审核提交时统一由后端 `_resolve_or_create_tag` 落库
+  - 标签操作支持：AI 推荐标签增删（搜索已有标签和手工新增标签区域已从前端隐藏）
+  - 新增一级标签选择：动态查询 `father_tags` 表填充下拉选项，AI 推荐/审核提交均需先选择一级标签
+  - AI 推荐标签时将选中的一级标签名传给后端 `ai-tag-suggest` 接口（`father_tag` 参数），后端据此从该一级标签下的二级标签中约束推荐 3~5 个
+  - 审核页标签来源收敛为 AI 推荐：
+    - AI 推荐标签（基于所选一级标签下的二级标签范围）
+    - ~~来源 B：系统内标签搜索并选择~~（已隐藏）
+    - ~~来源 C：手工新增标签~~（已隐藏）
+  - 推荐标签”点击加入”仅写入浏览器内存（`pendingTagNames`），不即时调用后端 API；审核提交时统一由后端 `_resolve_or_create_tag` 落库
   - 标签池中的每个标签在提交前都可删除（× 按钮）；删除仅移除「本题待关联集合」，不物理删除 `tags` 表数据
   - 交互反馈规范：
     - AI 推荐按钮支持 loading（推荐中）并防重复提交
