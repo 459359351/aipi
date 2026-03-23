@@ -63,9 +63,16 @@ async def lifespan(app: FastAPI):
             for (name,) in tags:
                 if name and len(name) >= 2:
                     jieba.add_word(name, freq=50000, tag="nz")  # nz=专有名词，高词频确保不被切分
-                    jieba.analyse.set_idf_freq(name, 15.0)      # 提高 TF-IDF 权重
+                    jieba.analyse.default_tfidf.idf_freq[name] = 15.0  # 提高 TF-IDF 权重
             logger.info("jieba 已加载 %d 个领域标签词", len(tags))
+
         finally:
+            # 初始化 NLP 标签匹配缓存（复用同一个 session，独立 try 避免影响 jieba）
+            try:
+                from .services.tag_matcher import refresh_tag_cache
+                refresh_tag_cache(_db)
+            except Exception as e:
+                logger.warning("NLP 标签匹配缓存初始化跳过: %s", e)
             _db.close()
     except Exception as e:
         logger.warning("jieba 预加载跳过: %s", e)
