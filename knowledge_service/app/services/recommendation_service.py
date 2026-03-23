@@ -3,8 +3,9 @@
 """
 
 import json
+import logging
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 
 from sqlalchemy import and_, desc, func, select
@@ -21,6 +22,9 @@ from ..models.user_profile import UserProfile
 from ..models.user_question_behavior import UserQuestionBehavior
 from ..services import document_service
 from ..services.knowledge_extractor import extract_knowledge_points_from_qa
+from ..services.tag_matcher import get_tag_matcher, match_tags_by_nlp
+
+logger = logging.getLogger(__name__)
 
 QUESTION_MODEL_MAP = {
     "single": SingleChoice,
@@ -28,6 +32,46 @@ QUESTION_MODEL_MAP = {
     "judge": Judge,
     "essay": Essay,
 }
+
+
+def _resolve_tag_ids_by_terms(db: Session, terms: List[Optional[str]]) -> Set[int]:
+    """
+    对 terms（如 [position, level]）执行三级标签匹配：
+      Level 1: SQL LIKE '%term%'
+      Level 2: jieba 分词 token 交集（始终补充，排除 LIKE 已命中的标签）
+      Level 3: TF-IDF 余弦相似度（同上）
+    """
+    matched_ids: Set[int] = set()
+
+    for term in terms:
+        if not term or not str(term).strip():
+            continue
+        term = str(term).strip()
+
+        # ── Level 1: SQL LIKE ──
+        rows = db.execute(
+            select(Tag.id).where(Tag.is_enabled == 1).where(Tag.tag_name.contains(term))
+        ).all()
+        like_ids = {int(r[0]) for r in rows}
+        matched_ids |= like_ids
+
+        # ── Level 2+3: NLP 始终补充（排除 LIKE 已命中的避免重复） ──
+        matcher = get_tag_matcher()
+        if not matcher.is_initialized:
+            continue
+
+        nlp_results = match_tags_by_nlp(
+            query=term,
+            exclude_ids=like_ids,
+        )
+        for tag_id, tag_name, score, match_level in nlp_results:
+            matched_ids.add(tag_id)
+            logger.debug(
+                "[NLP tag match] term='%s' -> tag='%s'(id=%d) score=%.4f level=%s",
+                term, tag_name, tag_id, score, match_level,
+            )
+
+    return matched_ids
 
 
 def _behavior_penalty(db: Session, user_id: Optional[str], question_type: str, question_id: int) -> float:
@@ -515,17 +559,8 @@ def recommend_by_profile(
             ).all()
             for r in rows:
                 tag_ids.add(int(r[0]))
-    # 兜底：按部门/岗位词匹配标签名
-    fallback_terms = [profile.department or "", profile.position or ""]
-    for term in fallback_terms:
-        term = str(term).strip()
-        if not term:
-            continue
-        rows = db.execute(
-            select(Tag.id).where(Tag.is_enabled == 1).where(Tag.tag_name.contains(term))
-        ).all()
-        for r in rows:
-            tag_ids.add(int(r[0]))
+    # 兜底：按部门/岗位词匹配标签名（三级匹配：LIKE + jieba 分词 + TF-IDF）
+    tag_ids |= _resolve_tag_ids_by_terms(db, [profile.department, profile.position])
 
     requested = {
         "single": max(0, int(single_count)),
@@ -601,15 +636,9 @@ def recommend_by_tags(
     if not tag_ids:
         raise ValueError("tag_ids 不能为空")
 
-    # 合并传入的 tag_ids 和 position/level 匹配到的额外标签
+    # 合并传入的 tag_ids 和 position/level 匹配到的额外标签（三级匹配）
     all_tag_ids = set(tag_ids)
-    for term in [position, level]:
-        if term and term.strip():
-            rows = db.execute(
-                select(Tag.id).where(Tag.is_enabled == 1).where(Tag.tag_name.contains(term.strip()))
-            ).all()
-            for r in rows:
-                all_tag_ids.add(int(r[0]))
+    all_tag_ids |= _resolve_tag_ids_by_terms(db, [position, level])
     all_tag_ids = list(all_tag_ids)
 
     requested = {
@@ -761,15 +790,9 @@ def recommend_question_set(
     elif mode == "tags":
         if not tag_ids:
             raise ValueError("mode=tags 时 tag_ids 必填")
-        # 如果提供了 position/level，也尝试匹配更多标签
+        # 如果提供了 position/level，也尝试匹配更多标签（三级匹配）
         extra_tag_ids = set(tag_ids)
-        for term in [position, level]:
-            if term and term.strip():
-                rows = db.execute(
-                    select(Tag.id).where(Tag.is_enabled == 1).where(Tag.tag_name.contains(term.strip()))
-                ).all()
-                for r in rows:
-                    extra_tag_ids.add(int(r[0]))
+        extra_tag_ids |= _resolve_tag_ids_by_terms(db, [position, level])
 
         all_tag_ids = list(extra_tag_ids)
         for q_type in ("single", "multiple", "judge", "essay"):
