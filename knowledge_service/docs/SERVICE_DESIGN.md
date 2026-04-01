@@ -1,7 +1,7 @@
 # 考试平台 AI 知识处理服务 — 设计文档
 
-> 版本：v1.2
-> 最后更新：2026-03-23
+> 版本：v1.3
+> 最后更新：2026-04-01
 > 状态：已实现
 
 ---
@@ -17,6 +17,7 @@
 - [7. 部署与运维](#7-部署与运维)
 - [8. 题目推荐与审核优化](#8-题目推荐与审核优化)
 - [9. 岗位/级别标签 NLP 语义匹配](#9-岗位级别标签-nlp-语义匹配)
+- [10. 基于错题的推荐与组卷](#10-基于错题的推荐与组卷)
 
 ---
 
@@ -35,6 +36,7 @@
 7. **AI 自动出题** — 基于已落库的知识点，生成单选题、多选题、判断题、简答题，写入 MySQL 正式题库表（tb_*，并将 `is_ai_generated` 标记为 1）
 8. **题目推荐练习** — 基于文档或错题，优先使用**标签（question_tag_rel）**，不足时使用知识点关联（question_knowledge_rel）与文档信息，推荐相似或相关题目，用于针对性练习
 9. **岗位/级别 NLP 语义匹配** — 当用户的岗位（position）、级别（level）等自由文本通过 SQL LIKE 无法充分匹配标签时，自动使用 jieba 分词 + TF-IDF 余弦相似度进行语义补充匹配，提升标签召回率
+10. **基于错题的推荐与组卷** — 从 `choice_answers`/`answers` 表查询用户错题记录，以错题标签/知识点为种子，通过四级降级管道（标签→知识点→题干文本→同文档）推荐相似题目。支持获取单道推荐题或组卷式套题，套题各题型数量通过 `.env` 配置
 
 ### 1.2 技术栈
 
@@ -891,11 +893,12 @@ stateDiagram-v2
 | 方法   | 路径                               | 说明                     |
 |------|----------------------------------|------------------------|
 | GET  | `/by-document/{document_id}`     | 按文档推荐一组练习题             |
-| GET  | `/by-question`                   | 基于错题推荐更多相关题目          |
+| GET  | `/by-question`                   | 基于错题推荐更多相关题目（四级降级管道）  |
+| GET  | `/wrong-question/random`         | 基于错题随机推荐一道相似练习题       |
+| GET  | `/question-set`                  | 获取不重复知识点的套题（支持4种模式）   |
 | POST | `/build-manual-knowledge-rel`    | 为人工作业题目批量生成题目-知识点关联 |
 | GET  | `/by-profile/{user_id}`          | 按用户画像推荐题目            |
 | GET  | `/by-tags`                       | 按标签 ID 组合推荐题目         |
-| GET  | `/question-set`                  | 获取不重复知识点的题目集          |
 | POST | `/behaviors/record`              | 记录用户答题行为              |
 | POST | `/behaviors/batch-record`        | 批量记录用户答题行为            |
 | POST | `/profiles/upsert`               | 创建或更新用户画像             |
@@ -929,14 +932,30 @@ stateDiagram-v2
   - `question_type`：single / multiple / judge / essay
   - `question_id`：错题在 tb_* 表中的主键 ID
   - `limit`：推荐数量上限，默认 10
-- 推荐策略（概要）：
-  1. 根据 `question_type + question_id` 在 `question_tag_rel` 中查出绑定的 `tag_id` 集合；
-  2. 找出共享标签的其他题目（按共享标签数量降序排序，reason=共享标签）；
-  3. 若仍不足，再使用 `question_knowledge_rel`（共享知识点，reason=共享知识点）兜底；
-  4. 若仍不足且错题 `document_id` 非空，则从同一文档下随机补充题目（排除自身，reason=同文档补充）；
-  5. 结果中每道题附带 `related_score`（共享标签数或共享知识点数）与 `recommend_reason`。
+  - `enable_text_match`：是否启用题干文本匹配降级，默认 true
+- 推荐策略（共享降级管道 `_cascade_find_candidates`，四级降级）：
+  1. **标签匹配**：在 `question_tag_rel` 中查共享 `tag_id` 的题目（先 confirmed=1，再 confirmed=0）；
+  2. **知识点匹配**：通过 `question_knowledge_rel` 查共享知识点的题目；
+  3. **题干文本匹配**：用 jieba TF-IDF 提取关键词，计算余弦相似度 ≥ 0.20 的候选题（`enable_text_match=true` 时生效）；
+  4. **同文档补充**：从同一 `document_id` 下随机补充（排除自身）；
+  5. 每级之间检查是否达到 `limit`，不足才继续下一级。结果附带 `related_score` 与 `recommend_reason`。
 
-该接口在调试页 `/static/practice.html` 中，用于用户答错后点击「推荐练习更多」时触发。
+该降级管道同时被 `wrong-question/random`（获取一道推荐题）和 `question-set`（套题定向补充）共享。
+
+#### GET /wrong-question/random — 基于错题推荐一道相似练习题
+
+用于「按错题」模式下的「获取一道题」：
+
+- 请求参数：
+  - `user_id`（int，必填）：用户 ID
+  - `bank_ids`（str，必填）：题库 ID 范围（如 `"3"` 或 `"1,3,5"` 或 `"1-5"`）
+  - `essay_score_threshold`（int，默认 0）：简答题错误阈值
+- 逻辑：
+  1. 从 `choice_answers`（is_correct=0）和 `answers`（score ≤ 阈值 且 ai_final_score IS NOT NULL）查询用户错题；
+  2. 随机选一道作为「种子」；
+  3. 调用 `recommend_by_question` 推荐相似题（走四级降级管道）；
+  4. 从推荐结果中随机取一道返回；推荐为空时降级返回种子题本身。
+- 返回：`{found, question: 推荐题, seed_question: 种子错题信息}`
 
 #### POST /build-manual-knowledge-rel — 为人工作业题生成知识点关联
 
@@ -963,7 +982,17 @@ stateDiagram-v2
 
 该接口通过管理页 `/static/recommend-admin.html` 一键触发，用于增强错题推荐对人工题库的覆盖能力。
 
-### 4.5 标签管理 API
+### 4.5 用户与考核批次 API
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/v1/users` | 获取用户列表（id、name、username），供"按错题"Tab 的用户下拉选择 |
+| GET | `/api/v1/assessment-batches` | 获取 active/completed 状态的考核批次列表 |
+| GET | `/api/v1/banks` | 获取题库列表（tb_banks），供"按错题"Tab 的题库下拉选择 |
+
+对应 ORM 模型：`User`（users 表）、`AssessmentBatch`（assessment_batches 表）。
+
+### 4.6 标签管理 API
 
 前缀：`/api/v1/tags`
 
@@ -981,7 +1010,7 @@ stateDiagram-v2
 
 对应调试页：`/static/tags.html`
 
-### 4.6 系统 API
+### 4.7 系统 API
 
 
 | 方法  | 路径        | 说明              |
@@ -1301,7 +1330,11 @@ knowledge_service/
 │   │   ├── question_knowledge_rel.py# question_knowledge_rel 题目-知识点关联表
 │   │   ├── question_audit_log.py    # question_audit_logs 审核日志表
 │   │   ├── user_profile.py          # user_profiles 用户画像表
-│   │   └── user_question_behavior.py# user_question_behaviors 用户行为表
+│   │   ├── user_question_behavior.py# user_question_behaviors 用户行为表
+│   │   ├── choice_answer.py         # choice_answers 选择判断题回答表 + CHOICE_TYPE_MAP
+│   │   ├── answer.py                # answers 简答题回答表
+│   │   ├── assessment_batch.py      # assessment_batches 考核批次表
+│   │   └── user.py                  # users 系统用户表
 │   ├── schemas/                     # Pydantic 请求/响应模型
 │   │   ├── document.py              # 文档相关 Schema
 │   │   ├── knowledge_point.py       # 知识点相关 Schema
@@ -1312,16 +1345,20 @@ knowledge_service/
 │   │   ├── knowledge_points.py      # 知识点查询端点
 │   │   ├── questions.py             # AI 出题端点（生成/任务状态/题目查询/审核提交）
 │   │   ├── tags.py                  # 标签管理端点（CRUD/一级标签/二级标签）
-│   │   └── recommendations.py       # 题目推荐与题目-知识点关联管理端点
+│   │   ├── recommendations.py       # 题目推荐与题目-知识点关联管理端点
+│   │   ├── assessment_batches.py    # 考核批次与题库列表端点
+│   │   └── users.py                 # 用户列表端点
 │   ├── services/                    # 业务服务层
 │   │   ├── document_service.py      # 文档 CRUD、知识点存储、级联删除、文档标签关联管理
 │   │   ├── minio_service.py         # MinIO 文件上传/下载/删除
 │   │   ├── parser_service.py        # 文档解析（PDF/Word/TXT）
 │   │   ├── knowledge_extractor.py   # LLM 知识点抽取（Prompt + JSON 容错）
 │   │   ├── question_generator.py    # LLM 出题服务（四种题型 Prompt + 解析）
-│   │   ├── recommendation_service.py# 题目推荐与人工题-知识点自动关联服务
+│   │   ├── recommendation_service.py# 题目推荐、错题推荐、共享降级管道
 │   │   ├── tag_matcher.py           # 岗位/级别标签 NLP 语义匹配（jieba 分词 + TF-IDF）
-│   │   ├── question_dedup.py        # 套题知识点去重（贪心去重组卷算法）
+│   │   ├── question_text_matcher.py # 题干文本相似度匹配（jieba TF-IDF 余弦相似度）
+│   │   ├── question_dedup.py        # 套题知识点去重（贪心去重 + 定向补充组卷算法）
+│   │   ├── batch_service.py         # 考核批次服务（bank_id_range 解析）
 │   │   └── dify_service.py          # Dify 知识库 API（创建/删除文档）
 │   └── tasks/                       # 后台异步任务
 │       ├── document_tasks.py        # 文档解析任务（7 步流水线）
@@ -1332,7 +1369,7 @@ knowledge_service/
 │   ├── list.html                    # 文档列表页
 │   ├── detail.html                  # 文档详情页（含编辑/删除/重新解析）
 │   ├── generate.html                # AI 出题调试页
-│   ├── practice.html                # 模拟答题页（答错后触发推荐练习更多）
+│   ├── practice.html                # 模拟答题页（4种模式：按文档/兴趣/岗位/错题，支持获取单题与套题）
 │   ├── tags.html                    # 标签管理页（维护预设标签与查看候选标签）
 │   └── recommend-admin.html         # 题目审核页（逐题审核、AI 推荐标签、一级标签选择与审核提交）
 ├── docs/                            # 设计文档
@@ -1460,6 +1497,11 @@ MinIO 控制台：[http://localhost:9001](http://localhost:9001)
 | DIFY_DATASET_ID   | Dify 数据集 ID      | （空）                                        |
 | DASHSCOPE_API_KEY | DashScope API 密钥 | （空）                                        |
 | LLM_MODEL         | LLM 模型名称         | qwen-max                                   |
+| QUESTION_SET_SINGLE | 套题单选题目标数量 | 5 |
+| QUESTION_SET_MULTIPLE | 套题多选题目标数量 | 3 |
+| QUESTION_SET_JUDGE | 套题判断题目标数量 | 4 |
+| QUESTION_SET_FILL_BLANK | 套题填空题目标数量（预留） | 0 |
+| QUESTION_SET_ESSAY | 套题简答题目标数量 | 2 |
 
 
 > MySQL 密码中的特殊字符（如 `@`）会自动进行 URL 编码，无需手动转义。
@@ -1635,6 +1677,9 @@ flowchart TD
 - `static/practice.html`
   - 新增按画像获取题目入口
   - 提交作答时记录用户行为，用于后续推荐重排
+  - 新增第 4 个 Tab「按错题」：选择用户 + 题库，支持获取单题（基于错题推荐）和套题
+  - 用户下拉从 `users` 表拉取，题库下拉从 `tb_banks` 表拉取
+  - 四个 Tab 共享「获取一道题」和「获取套题」按钮
 
 ## 9. 岗位/级别标签 NLP 语义匹配
 
@@ -1751,6 +1796,94 @@ SYNONYM_MAP = {
 | 标签缓存加载 | INFO | `[TagMatcher] 已加载 N 个标签的分词和 TF-IDF 缓存` |
 | NLP 匹配命中 | DEBUG | `[NLP tag match] term='纪检' -> tag='党风廉政建设'(id=5) score=0.6000 level=token_overlap` |
 | 缓存初始化跳过 | WARNING | `NLP 标签匹配缓存初始化跳过: <错误信息>` |
+
+---
+
+## 10. 基于错题的推荐与组卷
+
+### 10.1 背景
+
+用户在模拟答题中做错的题目是宝贵的学习信号。系统需要基于错题自动推荐相似题目，帮助用户强化薄弱知识点。
+
+### 10.2 数据来源
+
+| 表 | 用途 | 关键字段 |
+|---|---|---|
+| `choice_answers` | 选择/判断题答题记录 | `user_id, question_id, bank_id, is_correct, question_type`（tinyint: 1单选/2多选/3判断） |
+| `answers` | 简答题答题记录 | `user_id, question_id, bank_id, score, ai_final_score` |
+| `users` | 系统用户 | `id, name, username` |
+| `tb_banks` | 题库 | `id, bank_name` |
+
+ORM 模型：`ChoiceAnswer`（含 `CHOICE_TYPE_MAP = {1: "single", 2: "multiple", 3: "judge"}`）、`Answer`、`User`。
+
+### 10.3 共享降级管道
+
+`_cascade_find_candidates()` 是核心共享函数，被以下场景调用：
+- `recommend_by_question`：单题推荐
+- `wrong-question/random`：获取一道推荐题
+- `assemble_question_set`：套题定向补充
+
+**四级降级逻辑：**
+
+```
+Level 1: 标签匹配（confirmed=1 → confirmed=0）
+    ↓ 不足时
+Level 2: 知识点匹配（QuestionKnowledgeRel）
+    ↓ 不足时
+Level 3: 题干文本匹配（jieba TF-IDF 余弦相似度 ≥ 0.20）
+    ↓ 不足时
+Level 4: 同文档随机补充
+```
+
+### 10.4 获取一道推荐题
+
+接口：`GET /wrong-question/random`
+
+```
+用户错题列表 → 随机选种子 → recommend_by_question（四级降级）→ 随机取一道推荐题
+                                                                ↓ 推荐为空
+                                                         降级返回种子题本身
+```
+
+### 10.5 获取套题（组卷）
+
+接口：`GET /question-set?mode=wrong_questions`
+
+所有 mode（document / interest / tags / wrong_questions）统一走 `assemble_question_set`：
+
+1. **各题型目标数量**从 `.env` 配置读取（`QUESTION_SET_SINGLE=5` 等）
+2. **主选**：候选按行为分数排序，贪心去重（知识指纹重叠 ≤ 50%）
+3. **定向补充**：不足时用当前 mode 的 `SupplementContext`（tag_ids/knowledge_ids/document_id）调用降级管道
+4. **随机兜底**：仍不足时从全题库随机补满
+
+各 mode 的 `SupplementContext`：
+
+| Mode | tag_ids | knowledge_ids | document_id |
+|------|---------|---------------|-------------|
+| document | 文档关联标签 | 文档知识点 | 文档 ID |
+| interest | 兴趣匹配标签 | — | — |
+| tags | 岗位/级别标签 | — | — |
+| wrong_questions | 错题关联标签 | 错题关联知识点 | 错题来源文档 |
+
+### 10.6 题干文本匹配模块
+
+独立模块 `question_text_matcher.py`：
+
+- 函数：`find_similar_by_text(db, source_question_text, limit, exclude_ids)`
+- 算法：jieba TF-IDF 提取关键词（topK=10）→ 稀疏向量余弦相似度
+- 阈值：≥ 0.20
+- 候选：每张题型表最多 50 条（总计 ~200）
+- 返回：`List[Tuple[question_type, question_id, ORM_object]]`
+
+### 10.7 前端「按错题」Tab
+
+`practice.html` 的第 4 个 Tab：
+
+- 用户下拉：从 `GET /api/v1/users` 拉取
+- 题库下拉：从 `GET /api/v1/banks` 拉取
+- 「获取一道题」→ 调用 `/wrong-question/random`
+- 「获取套题」→ 调用 `/question-set?mode=wrong_questions`
+- 复用已有的 `renderQuestionSet()` 和 `submitAllAnswers()`
 
 ---
 

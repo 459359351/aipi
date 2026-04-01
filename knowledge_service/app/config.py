@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     DASHSCOPE_API_KEY: str = ""
     LLM_MODEL: str = "qwen-max"
 
+    # ── 套题题型数量配置 ──────────────────────────────────
+    QUESTION_SET_SINGLE: int = 5
+    QUESTION_SET_MULTIPLE: int = 3
+    QUESTION_SET_JUDGE: int = 4
+    QUESTION_SET_FILL_BLANK: int = 0
+    QUESTION_SET_ESSAY: int = 2
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

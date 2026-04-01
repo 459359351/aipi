@@ -33,3 +33,7 @@ ENV/
 # MinIO local data
 **/minio-data/
 **/minio_data/
+
+# Others
+**/files/
+**/docs/

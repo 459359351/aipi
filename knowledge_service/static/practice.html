@@ -58,6 +58,8 @@
                         data-tab="interest" onclick="switchTab('interest')">按兴趣标签</button>
                     <button class="tab-btn px-5 py-2.5 text-sm border-b-2 border-transparent text-gray-500 hover:text-blue-600"
                         data-tab="tags" onclick="switchTab('tags')">按岗位标签</button>
+                    <button class="tab-btn px-5 py-2.5 text-sm border-b-2 border-transparent text-gray-500 hover:text-blue-600"
+                        data-tab="wrong_questions" onclick="switchTab('wrong_questions')">按错题</button>
                 </div>
             </div>
 
@@ -114,7 +116,26 @@
                 </div>
             </div>
 
-            <!-- 按钮 -->
+            <!-- Tab D: 按错题 -->
+            <div id="panel-wrong_questions" class="tab-panel">
+                <div class="mb-3">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">用户</label>
+                    <select id="wrongUserSelect"
+                        class="w-full max-w-sm px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                        <option value="">-- 加载中 --</option>
+                    </select>
+                </div>
+                <div class="mb-1">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">题库</label>
+                    <select id="bankSelect"
+                        class="w-full max-w-sm px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                        <option value="">-- 加载中 --</option>
+                    </select>
+                </div>
+                <p id="wrongFetchMsg" class="mt-2 text-sm hidden"></p>
+            </div>
+
+            <!-- 按钮（共享） -->
             <div class="flex flex-wrap gap-3 mt-5">
                 <button type="button" id="fetchOneBtn" onclick="fetchOneQuestion()"
                     class="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm transition">
@@ -189,7 +210,12 @@
             document.querySelectorAll('.tab-panel').forEach(panel => {
                 panel.classList.toggle('active', panel.id === `panel-${tab}`);
             });
+            // wrong_questions 模式时隐藏姓名文本输入（用 Tab 内的用户下拉代替）
+            const isWrong = tab === 'wrong_questions';
+            document.getElementById('nameInput').parentElement.style.display = isWrong ? 'none' : '';
             hideError();
+            const wrongMsg = document.getElementById('wrongFetchMsg');
+            if (wrongMsg) wrongMsg.classList.add('hidden');
         }
 
         // ─── 工具函数 ───────────────────────────────────
@@ -330,6 +356,26 @@
                     const pos = document.getElementById('positionInput').value.trim();
                     const lvl = document.getElementById('levelInput').value.trim();
                     url = `${API_BASE}/recommendations/by-tags?tag_ids=${tagIds.join(',')}&single_count=1&multiple_count=1&judge_count=1&essay_count=0&user_id=${encodeURIComponent(name)}&position=${encodeURIComponent(pos)}&level=${encodeURIComponent(lvl)}`;
+                } else if (currentTab === 'wrong_questions') {
+                    // 按错题：随机抽一道用户错题
+                    const wrongUserId = document.getElementById('wrongUserSelect').value;
+                    if (!wrongUserId) { showError('请先选择用户'); return; }
+                    const bankId = document.getElementById('bankSelect').value;
+                    if (!bankId) { showError('请先选择题库'); return; }
+
+                    const wr = await fetch(`${API_BASE}/recommendations/wrong-question/random?user_id=${wrongUserId}&bank_ids=${bankId}`);
+                    if (!wr.ok) throw new Error((await wr.json().catch(() => ({}))).detail || '获取错题失败');
+                    const wData = await wr.json();
+                    if (!wData.found) { showError('该批次下暂无错题记录'); return; }
+
+                    currentQuestion = wData.question;
+                    renderQuestion(currentQuestion);
+                    currentStartAt = Date.now();
+                    document.getElementById('questionSection').classList.remove('hidden');
+                    document.getElementById('questionSetSection').classList.add('hidden');
+                    document.getElementById('recommendSection').classList.add('hidden');
+                    document.getElementById('resultMessage').classList.add('hidden');
+                    return; // 提前 return，跳过下面的通用逻辑
                 }
 
                 const r = await fetch(url);
@@ -392,6 +438,12 @@
                         });
                     }
                     params += `&tag_ids=${tagIds.join(',')}&position=${encodeURIComponent(pos)}&level=${encodeURIComponent(lvl)}`;
+                } else if (currentTab === 'wrong_questions') {
+                    const wrongUserId = document.getElementById('wrongUserSelect').value;
+                    if (!wrongUserId) { showError('请先选择用户'); return; }
+                    const bankId = document.getElementById('bankSelect').value;
+                    if (!bankId) { showError('请先选择题库'); return; }
+                    params = `mode=wrong_questions&user_id=${wrongUserId}&bank_ids=${bankId}`;
                 }
 
                 const r = await fetch(`${API_BASE}/recommendations/question-set?${params}`);
@@ -700,9 +752,55 @@
             }
         }
 
+        // ─── 用户列表加载（按错题标签页） ─────────────────
+        async function loadUsers() {
+            const sel = document.getElementById('wrongUserSelect');
+            try {
+                const r = await fetch(`${API_BASE}/users`);
+                const data = await r.json();
+                if (!data || data.length === 0) {
+                    sel.innerHTML = '<option value="">暂无用户</option>';
+                    return;
+                }
+                sel.innerHTML = '<option value="">-- 请选择用户 --</option>';
+                data.forEach(u => {
+                    const opt = document.createElement('option');
+                    opt.value = u.id;
+                    opt.textContent = u.name || u.username;
+                    sel.appendChild(opt);
+                });
+            } catch {
+                sel.innerHTML = '<option value="">加载用户失败</option>';
+            }
+        }
+
+        // ─── 题库加载（按错题标签页） ─────────────────────
+        async function loadBanks() {
+            const sel = document.getElementById('bankSelect');
+            try {
+                const r = await fetch(`${API_BASE}/banks`);
+                const data = await r.json();
+                if (!data || data.length === 0) {
+                    sel.innerHTML = '<option value="">暂无可用题库</option>';
+                    return;
+                }
+                sel.innerHTML = '<option value="">-- 请选择题库 --</option>';
+                data.forEach(b => {
+                    const opt = document.createElement('option');
+                    opt.value = b.id;
+                    opt.textContent = `[${b.id}] ${b.bank_name}`;
+                    sel.appendChild(opt);
+                });
+            } catch {
+                sel.innerHTML = '<option value="">加载题库失败</option>';
+            }
+        }
+
         // ─── 初始化 ─────────────────────────────────────
         loadDocuments();
         loadFatherTags();
+        loadUsers();
+        loadBanks();
     </script>
 </body>
 
