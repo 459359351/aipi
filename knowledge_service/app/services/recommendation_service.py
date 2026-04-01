@@ -380,12 +380,137 @@ def _get_question_obj(db: Session, question_type: str, question_id: int):
     return db.query(model).filter(model.id == question_id).first()
 
 
+def _cascade_find_candidates(
+    db: Session,
+    tag_ids: List[int],
+    knowledge_ids: List[int],
+    document_id: Optional[int],
+    question_text: Optional[str],
+    limit: int,
+    exclude: Set[Tuple[str, int]],
+    enable_text_match: bool = True,
+) -> List[Tuple[str, int, object, str]]:
+    """
+    共享降级管道：标签 → 知识点 → 题干文本匹配 → 同文档。
+
+    返回 (question_type, question_id, ORM_object, recommend_reason) 元组列表。
+    每级之间检查是否已达到 limit，不足才继续下一级。
+    exclude 在所有级别共享，避免重复。
+    """
+    results: List[Tuple[str, int, object, str]] = []
+    used = set(exclude)
+
+    # ── 1) 标签优先召回：先 confirmed=1，再 confirmed=0 ──
+    if tag_ids:
+        for confirmed in (1, 0):
+            if len(results) >= limit:
+                break
+            tag_candidate_rows = db.execute(
+                select(
+                    question_tag_rel.c.question_type,
+                    question_tag_rel.c.question_id,
+                    func.count(func.distinct(question_tag_rel.c.tag_id)).label("overlap"),
+                )
+                .select_from(question_tag_rel.join(Tag, Tag.id == question_tag_rel.c.tag_id))
+                .where(question_tag_rel.c.tag_id.in_(tag_ids))
+                .where(Tag.is_enabled == 1)
+                .where(question_tag_rel.c.is_confirmed == confirmed)
+                .group_by(question_tag_rel.c.question_type, question_tag_rel.c.question_id)
+                .order_by(desc("overlap"))
+            ).all()
+
+            for row in tag_candidate_rows:
+                c_type = _normalize_question_type(row[0])
+                c_id = int(row[1])
+                key = (c_type, c_id)
+                if key in used:
+                    continue
+                obj = _get_question_obj(db, c_type, c_id)
+                if not obj:
+                    continue
+                used.add(key)
+                reason = "共享标签(已确认)" if confirmed == 1 else "共享标签(待确认)"
+                results.append((c_type, c_id, obj, reason))
+                if len(results) >= limit:
+                    break
+
+    # ── 2) 知识点兜底召回 ──
+    if len(results) < limit and knowledge_ids:
+        candidate_rows = (
+            db.query(
+                QuestionKnowledgeRel.question_type,
+                QuestionKnowledgeRel.question_id,
+                func.count(func.distinct(QuestionKnowledgeRel.knowledge_id)).label("overlap"),
+            )
+            .filter(QuestionKnowledgeRel.knowledge_id.in_(knowledge_ids))
+            .group_by(QuestionKnowledgeRel.question_type, QuestionKnowledgeRel.question_id)
+            .order_by(desc("overlap"), desc(func.max(QuestionKnowledgeRel.created_at)))
+            .all()
+        )
+
+        for row in candidate_rows:
+            c_type = _normalize_question_type(row.question_type)
+            c_id = int(row.question_id)
+            key = (c_type, c_id)
+            if key in used:
+                continue
+            obj = _get_question_obj(db, c_type, c_id)
+            if not obj:
+                continue
+            used.add(key)
+            results.append((c_type, c_id, obj, "共享知识点"))
+            if len(results) >= limit:
+                break
+
+    # ── 3) 题干文本匹配 ──
+    if len(results) < limit and enable_text_match and question_text:
+        from .question_text_matcher import find_similar_by_text
+        text_matches = find_similar_by_text(
+            db=db,
+            source_question_text=question_text,
+            limit=limit - len(results),
+            exclude_ids=used,
+        )
+        for c_type, c_id, obj in text_matches:
+            key = (c_type, c_id)
+            if key in used:
+                continue
+            used.add(key)
+            results.append((c_type, c_id, obj, "题干文本相似"))
+            if len(results) >= limit:
+                break
+
+    # ── 4) 同文档补充 ──
+    if len(results) < limit and document_id:
+        for c_type, model in QUESTION_MODEL_MAP.items():
+            fallback_rows = (
+                db.query(model)
+                .filter(model.document_id == document_id)
+                .order_by(func.rand())
+                .limit(limit)
+                .all()
+            )
+            for item in fallback_rows:
+                key = (c_type, int(item.id))
+                if key in used:
+                    continue
+                used.add(key)
+                results.append((c_type, int(item.id), item, "同文档补充"))
+                if len(results) >= limit:
+                    break
+            if len(results) >= limit:
+                break
+
+    return results
+
+
 def recommend_by_question(
     db: Session,
     question_type: str,
     question_id: int,
     limit: int = 10,
     user_id: Optional[str] = None,
+    enable_text_match: bool = True,
 ) -> Dict:
     normalized_type = _normalize_question_type(question_type)
     limit = max(1, min(int(limit), 50))
@@ -413,109 +538,29 @@ def recommend_by_question(
     )
     knowledge_ids = [int(r[0]) for r in rel_rows]
 
+    # 使用共享降级管道
+    cascade_results = _cascade_find_candidates(
+        db=db,
+        tag_ids=base_tag_ids,
+        knowledge_ids=knowledge_ids,
+        document_id=getattr(base_obj, "document_id", None),
+        question_text=getattr(base_obj, "question_text", None),
+        limit=limit,
+        exclude={(normalized_type, question_id)},
+        enable_text_match=enable_text_match,
+    )
+
+    # 序列化管道结果
     related_questions: List[Dict] = []
-    used: set[Tuple[str, int]] = {(normalized_type, question_id)}
-
-    # 1) 标签优先召回：先已确认，再未确认
-    if base_tag_ids:
-        for confirmed in (1, 0):
-            if len(related_questions) >= limit:
-                break
-            tag_candidate_rows = db.execute(
-                select(
-                    question_tag_rel.c.question_type,
-                    question_tag_rel.c.question_id,
-                    func.count(func.distinct(question_tag_rel.c.tag_id)).label("overlap"),
-                )
-                .select_from(question_tag_rel.join(Tag, Tag.id == question_tag_rel.c.tag_id))
-                .where(question_tag_rel.c.tag_id.in_(base_tag_ids))
-                .where(Tag.is_enabled == 1)
-                .where(question_tag_rel.c.is_confirmed == confirmed)
-                .group_by(question_tag_rel.c.question_type, question_tag_rel.c.question_id)
-                .order_by(desc("overlap"))
-            ).all()
-
-            for row in tag_candidate_rows:
-                c_type = _normalize_question_type(row[0])
-                c_id = int(row[1])
-                key = (c_type, c_id)
-                if key in used:
-                    continue
-                obj = _get_question_obj(db, c_type, c_id)
-                if not obj:
-                    continue
-                used.add(key)
-                related_questions.append(
-                    _serialize_question(
-                        c_type,
-                        obj,
-                        related_score=int(row[2]) + int(_behavior_penalty(db, user_id, c_type, c_id) * 100),
-                        recommend_reason="共享标签(已确认)" if confirmed == 1 else "共享标签(待确认)",
-                    )
-                )
-                if len(related_questions) >= limit:
-                    break
-
-    # 2) 知识点兜底召回
-    if len(related_questions) < limit and knowledge_ids:
-        candidate_rows = (
-            db.query(
-                QuestionKnowledgeRel.question_type,
-                QuestionKnowledgeRel.question_id,
-                func.count(func.distinct(QuestionKnowledgeRel.knowledge_id)).label("overlap"),
+    for c_type, c_id, obj, reason in cascade_results:
+        related_questions.append(
+            _serialize_question(
+                c_type,
+                obj,
+                related_score=int(_behavior_penalty(db, user_id, c_type, c_id) * 100),
+                recommend_reason=reason,
             )
-            .filter(QuestionKnowledgeRel.knowledge_id.in_(knowledge_ids))
-            .group_by(QuestionKnowledgeRel.question_type, QuestionKnowledgeRel.question_id)
-            .order_by(desc("overlap"), desc(func.max(QuestionKnowledgeRel.created_at)))
-            .all()
         )
-
-        for row in candidate_rows:
-            c_type = _normalize_question_type(row.question_type)
-            c_id = int(row.question_id)
-            key = (c_type, c_id)
-            if key in used:
-                continue
-            obj = _get_question_obj(db, c_type, c_id)
-            if not obj:
-                continue
-            used.add(key)
-            related_questions.append(
-                _serialize_question(
-                    c_type,
-                    obj,
-                    related_score=int(row.overlap) + int(_behavior_penalty(db, user_id, c_type, c_id) * 100),
-                    recommend_reason="共享知识点",
-                )
-            )
-            if len(related_questions) >= limit:
-                break
-
-    if len(related_questions) < limit and getattr(base_obj, "document_id", None):
-        base_document_id = int(base_obj.document_id)
-        for c_type, model in QUESTION_MODEL_MAP.items():
-            query = db.query(model).filter(model.document_id == base_document_id)
-            if c_type == normalized_type:
-                query = query.filter(model.id != question_id)
-            fallback_rows = query.order_by(func.rand()).limit(limit).all()
-
-            for item in fallback_rows:
-                key = (c_type, int(item.id))
-                if key in used:
-                    continue
-                used.add(key)
-                related_questions.append(
-                    _serialize_question(
-                        c_type,
-                        item,
-                        related_score=int(_behavior_penalty(db, user_id, c_type, int(item.id)) * 100),
-                        recommend_reason="同文档补充",
-                    )
-                )
-                if len(related_questions) >= limit:
-                    break
-            if len(related_questions) >= limit:
-                break
 
     related_questions.sort(key=lambda x: -(int(x.get("related_score") or 0)))
 
@@ -696,6 +741,85 @@ def recommend_by_tags(
     }
 
 
+def get_random_wrong_question(
+    db: Session,
+    user_id: int,
+    bank_ids: List[int],
+    essay_score_threshold: int = 0,
+) -> Optional[Dict]:
+    """
+    从用户的错题中随机选一道作为种子，通过推荐管道找到相似题，
+    返回一道推荐题（非原始错题）。推荐列表为空时降级返回种子题本身。
+    返回 {question: 推荐题, seed_question: 种子错题信息} 或 None。
+    """
+    import random
+    from ..models.choice_answer import ChoiceAnswer, CHOICE_TYPE_MAP
+    from ..models.answer import Answer
+
+    wrong_questions: List[Tuple[str, int]] = []
+
+    # 选择/判断题错题
+    choice_rows = (
+        db.query(ChoiceAnswer.question_id, ChoiceAnswer.question_type)
+        .filter(
+            ChoiceAnswer.user_id == user_id,
+            ChoiceAnswer.bank_id.in_(bank_ids),
+            ChoiceAnswer.is_correct == 0,
+        )
+        .all()
+    )
+    for row in choice_rows:
+        q_type_str = CHOICE_TYPE_MAP.get(int(row.question_type))
+        if q_type_str:
+            wrong_questions.append((q_type_str, int(row.question_id)))
+
+    # 简答题错题
+    essay_rows = (
+        db.query(Answer.question_id)
+        .filter(
+            Answer.user_id == user_id,
+            Answer.bank_id.in_(bank_ids),
+            Answer.score <= essay_score_threshold,
+            Answer.ai_final_score.isnot(None),
+        )
+        .all()
+    )
+    for row in essay_rows:
+        wrong_questions.append(("essay", int(row.question_id)))
+
+    if not wrong_questions:
+        return None
+
+    # 去重后随机选一道作为种子
+    unique_wrong = list(set(wrong_questions))
+    seed_type, seed_id = random.choice(unique_wrong)
+
+    seed_obj = _get_question_obj(db, seed_type, seed_id)
+    if not seed_obj:
+        return None
+
+    seed_question = _serialize_question(seed_type, seed_obj, recommend_reason="种子错题")
+
+    # 通过推荐管道找相似题
+    try:
+        rec_result = recommend_by_question(
+            db=db,
+            question_type=seed_type,
+            question_id=seed_id,
+            limit=5,
+            enable_text_match=True,
+        )
+        related = rec_result.get("related_questions", [])
+        if related:
+            recommended = random.choice(related)
+            return {"question": recommended, "seed_question": seed_question}
+    except Exception as e:
+        logger.warning("推荐管道调用失败，降级返回种子题: %s", e)
+
+    # 降级：推荐列表为空或调用失败，返回种子题本身
+    return {"question": seed_question, "seed_question": seed_question}
+
+
 def recommend_question_set(
     db: Session,
     mode: str,
@@ -706,23 +830,32 @@ def recommend_question_set(
     position: Optional[str] = None,
     level: Optional[str] = None,
     count_ranges: Optional[Dict] = None,
+    wrong_user_id: Optional[int] = None,
+    bank_ids: Optional[str] = None,
+    essay_score_threshold: int = 0,
 ) -> Dict:
     """
     组卷：获取一套跨题型知识点不重复的套题。
-    mode: "document" | "interest" | "tags"
+    mode: "document" | "interest" | "tags" | "wrong_questions"
     """
     from .question_dedup import (
         QUESTION_MODEL_MAP as DEDUP_MODEL_MAP,
         DEFAULT_COUNT_RANGES,
         build_candidate_pool,
         assemble_question_set,
+        get_configured_counts,
+        SupplementContext,
     )
+
+    # 使用 .env 配置的目标数量来决定候选收集量
+    configured_counts = get_configured_counts()
 
     if count_ranges is None:
         count_ranges = dict(DEFAULT_COUNT_RANGES)
 
     # ── 第一步：根据 mode 收集各题型候选题 ──
     candidates_by_type: Dict[str, list] = {}
+    supplement_ctx = SupplementContext()  # 各 mode 填充自己的上下文
 
     if mode == "document":
         if not document_id:
@@ -733,10 +866,15 @@ def recommend_question_set(
 
         knowledge_ids = _load_document_knowledge_ids(db, document_id)
         tag_ids_from_doc = _load_document_tag_ids(db, document_id)
+        supplement_ctx = SupplementContext(
+            tag_ids=tag_ids_from_doc,
+            knowledge_ids=knowledge_ids,
+            document_id=document_id,
+        )
 
         for q_type in ("single", "multiple", "judge", "essay"):
-            lo, hi = count_ranges.get(q_type, (0, 0))
-            fetch_limit = max(hi * 3, 30)
+            target = configured_counts.get(q_type, 0)
+            fetch_limit = max(target * 3, 30)
             model = QUESTION_MODEL_MAP[q_type]
             # 文档内题目
             doc_qs = db.query(model).filter(model.document_id == document_id).order_by(func.rand()).limit(fetch_limit).all()
@@ -769,9 +907,11 @@ def recommend_question_set(
         if not resolved_tag_ids:
             raise ValueError("未匹配到任何标签，请检查兴趣标签输入")
 
+        supplement_ctx = SupplementContext(tag_ids=list(resolved_tag_ids))
+
         for q_type in ("single", "multiple", "judge", "essay"):
-            lo, hi = count_ranges.get(q_type, (0, 0))
-            fetch_limit = max(hi * 3, 30)
+            target = configured_counts.get(q_type, 0)
+            fetch_limit = max(target * 3, 30)
             model = QUESTION_MODEL_MAP[q_type]
             qs = (
                 db.query(model)
@@ -795,9 +935,11 @@ def recommend_question_set(
         extra_tag_ids |= _resolve_tag_ids_by_terms(db, [position, level])
 
         all_tag_ids = list(extra_tag_ids)
+        supplement_ctx = SupplementContext(tag_ids=all_tag_ids)
+
         for q_type in ("single", "multiple", "judge", "essay"):
-            lo, hi = count_ranges.get(q_type, (0, 0))
-            fetch_limit = max(hi * 3, 30)
+            target = configured_counts.get(q_type, 0)
+            fetch_limit = max(target * 3, 30)
             model = QUESTION_MODEL_MAP[q_type]
             qs = (
                 db.query(model)
@@ -812,11 +954,115 @@ def recommend_question_set(
                 .all()
             )
             candidates_by_type[q_type] = build_candidate_pool(db, q_type, qs, user_id)
+
+    elif mode == "wrong_questions":
+        if wrong_user_id is None:
+            raise ValueError("mode=wrong_questions 时 user_id 必填")
+        if not bank_ids:
+            raise ValueError("mode=wrong_questions 时 bank_ids 必填")
+
+        from ..services.batch_service import parse_bank_id_range
+        from ..models.choice_answer import ChoiceAnswer, CHOICE_TYPE_MAP
+        from ..models.answer import Answer
+
+        parsed_bank_ids = parse_bank_id_range(bank_ids)
+        if not parsed_bank_ids:
+            raise ValueError("bank_ids 解析为空")
+
+        # 1) 查询选择/判断题错题
+        wrong_questions: List[Tuple[str, int]] = []  # (question_type_str, question_id)
+        choice_rows = (
+            db.query(ChoiceAnswer.question_id, ChoiceAnswer.question_type)
+            .filter(
+                ChoiceAnswer.user_id == wrong_user_id,
+                ChoiceAnswer.bank_id.in_(parsed_bank_ids),
+                ChoiceAnswer.is_correct == 0,
+            )
+            .all()
+        )
+        for row in choice_rows:
+            q_type_str = CHOICE_TYPE_MAP.get(int(row.question_type))
+            if q_type_str:
+                wrong_questions.append((q_type_str, int(row.question_id)))
+
+        # 2) 查询简答题错题
+        essay_query = db.query(Answer.question_id).filter(
+            Answer.user_id == wrong_user_id,
+            Answer.bank_id.in_(parsed_bank_ids),
+            Answer.score <= essay_score_threshold,
+        )
+        # 过滤掉未评分的记录（ai_final_score IS NOT NULL）
+        essay_query = essay_query.filter(Answer.ai_final_score.isnot(None))
+        essay_rows = essay_query.all()
+        for row in essay_rows:
+            wrong_questions.append(("essay", int(row.question_id)))
+
+        if not wrong_questions:
+            # R12: 无错题返回空结果
+            return {
+                "mode": mode,
+                "total": 0,
+                "counts": {},
+                "groups": {},
+            }
+
+        # 3) 构建排除集合（原始错题不应出现在推荐结果中）
+        exclude_set: Set[Tuple[str, int]] = set(wrong_questions)
+
+        # 4) 聚合所有错题的 tag_ids 和 knowledge_ids
+        all_tag_ids: Set[int] = set()
+        all_knowledge_ids: Set[int] = set()
+        all_document_ids: Set[int] = set()
+
+        for q_type, q_id in wrong_questions:
+            tag_ids_for_q = _load_question_tag_ids(db, q_type, q_id)
+            all_tag_ids.update(tag_ids_for_q)
+
+            kp_rows = (
+                db.query(QuestionKnowledgeRel.knowledge_id)
+                .filter(
+                    QuestionKnowledgeRel.question_type == q_type,
+                    QuestionKnowledgeRel.question_id == q_id,
+                )
+                .all()
+            )
+            all_knowledge_ids.update(int(r[0]) for r in kp_rows)
+
+            obj = _get_question_obj(db, q_type, q_id)
+            if obj and getattr(obj, "document_id", None):
+                all_document_ids.add(int(obj.document_id))
+
+        supplement_ctx = SupplementContext(
+            tag_ids=list(all_tag_ids),
+            knowledge_ids=list(all_knowledge_ids),
+            document_id=list(all_document_ids)[0] if all_document_ids else None,
+        )
+
+        # 5) 调用共享降级管道（不传 question_text，多道错题题干无法聚合）
+        cascade_results = _cascade_find_candidates(
+            db=db,
+            tag_ids=list(all_tag_ids),
+            knowledge_ids=list(all_knowledge_ids),
+            document_id=list(all_document_ids)[0] if all_document_ids else None,
+            question_text=None,
+            limit=100,  # 拿足够多的候选给 assemble 去重
+            exclude=exclude_set,
+            enable_text_match=False,
+        )
+
+        # 6) 按题型分组，构建 QuestionCandidate
+        type_grouped: Dict[str, list] = {}
+        for c_type, c_id, obj, reason in cascade_results:
+            type_grouped.setdefault(c_type, []).append(obj)
+
+        for q_type, qs in type_grouped.items():
+            candidates_by_type[q_type] = build_candidate_pool(db, q_type, qs, user_id)
+
     else:
         raise ValueError(f"不支持的 mode: {mode}")
 
-    # ── 第二步：贪心去重组卷 ──
-    result = assemble_question_set(candidates_by_type, count_ranges)
+    # ── 第二步：贪心去重组卷（定向补充 + 兜底随机） ──
+    result = assemble_question_set(candidates_by_type, count_ranges, db=db, supplement_ctx=supplement_ctx)
 
     # ── 第三步：序列化 ──
     groups: Dict[str, list] = {}

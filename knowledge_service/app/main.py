@@ -17,6 +17,8 @@ from .api.knowledge_points import router as knowledge_points_router
 from .api.questions import router as questions_router
 from .api.recommendations import router as recommendations_router
 from .api.tags import router as tags_router
+from .api.assessment_batches import router as assessment_batches_router
+from .api.users import router as users_router
 from .services.minio_service import minio_service
 
 settings = get_settings()
@@ -118,6 +120,8 @@ app.include_router(knowledge_points_router, prefix="/api/v1")
 app.include_router(questions_router, prefix="/api/v1")
 app.include_router(recommendations_router, prefix="/api/v1")
 app.include_router(tags_router, prefix="/api/v1")
+app.include_router(assessment_batches_router, prefix="/api/v1")
+app.include_router(users_router, prefix="/api/v1")
 
 
 # ── 健康检查 ──────────────────────────────────────────────

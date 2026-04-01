@@ -26,13 +26,25 @@ QUESTION_MODEL_MAP = {
     "essay": Essay,
 }
 
-# 套题默认题目数量范围
+# 套题默认题目数量范围（旧格式，作为 fallback）
 DEFAULT_COUNT_RANGES: Dict[str, Tuple[int, int]] = {
     "single": (3, 8),
     "multiple": (2, 5),
     "judge": (3, 6),
     "essay": (1, 2),
 }
+
+
+def get_configured_counts() -> Dict[str, int]:
+    """从 .env 配置读取各题型固定目标数量"""
+    from ..config import get_settings
+    settings = get_settings()
+    return {
+        "single": settings.QUESTION_SET_SINGLE,
+        "multiple": settings.QUESTION_SET_MULTIPLE,
+        "judge": settings.QUESTION_SET_JUDGE,
+        "essay": settings.QUESTION_SET_ESSAY,
+    }
 
 # 题型处理优先级：单选/判断优先（覆盖知识点少，先分配避免被挤占）
 TYPE_PRIORITY = ["single", "judge", "multiple", "essay"]
@@ -151,34 +163,38 @@ def build_candidate_pool(
     return candidates
 
 
+@dataclass
+class SupplementContext:
+    """各 mode 传入的上下文，用于定向补充不足的题型"""
+    tag_ids: List[int] = field(default_factory=list)
+    knowledge_ids: List[int] = field(default_factory=list)
+    document_id: Optional[int] = None
+    question_text: Optional[str] = None
+
+
 def assemble_question_set(
     candidates_by_type: Dict[str, List[QuestionCandidate]],
     count_ranges: Optional[Dict[str, Tuple[int, int]]] = None,
+    db: Optional[Session] = None,
+    supplement_ctx: Optional[SupplementContext] = None,
 ) -> Dict[str, List[QuestionCandidate]]:
     """
     贪心去重组卷算法。
 
-    1. 每种题型在 (min, max) 范围内随机确定目标数量
-    2. 按优先顺序处理题型（essay → multiple → single → judge）
-    3. 对每道候选题检查知识指纹重叠率，<=50% 则选入
-    4. 返回各题型选中列表
+    从 .env 读取各题型固定目标数量。
+    候选不足时通过 cascade 管道定向补充（标签→知识点→文本→同文档），
+    仍不足则从题库随机补满。
     """
-    if count_ranges is None:
-        count_ranges = DEFAULT_COUNT_RANGES
-
-    # 确定各题型目标数量
-    actual_counts: Dict[str, int] = {}
-    for q_type, (lo, hi) in count_ranges.items():
-        available = len(candidates_by_type.get(q_type, []))
-        actual_hi = min(hi, available)
-        actual_lo = min(lo, actual_hi)
-        actual_counts[q_type] = random.randint(actual_lo, actual_hi) if actual_lo <= actual_hi else 0
+    # 使用 .env 配置的固定目标数量
+    target_counts = get_configured_counts()
 
     used_fingerprints: Set[str] = set()
     result: Dict[str, List[QuestionCandidate]] = {}
+    # 全局已选集合，跨题型去重
+    global_selected: Set[Tuple[str, int]] = set()
 
     for q_type in TYPE_PRIORITY:
-        needed = actual_counts.get(q_type, 0)
+        needed = target_counts.get(q_type, 0)
         if needed <= 0:
             result[q_type] = []
             continue
@@ -191,11 +207,13 @@ def assemble_question_set(
         for c in cands_sorted:
             if len(selected) >= needed:
                 break
+            if (c.question_type, c.question_id) in global_selected:
+                continue
 
             fp = c.fingerprint
             if not fp:
-                # 无指纹数据，直接接受
                 selected.append(c)
+                global_selected.add((c.question_type, c.question_id))
                 continue
 
             overlap = fp & used_fingerprints
@@ -203,22 +221,67 @@ def assemble_question_set(
             if overlap_ratio <= 0.5:
                 selected.append(c)
                 used_fingerprints |= fp
+                global_selected.add((c.question_type, c.question_id))
+
+        # ── 定向补充：通过 cascade 管道 ──
+        if len(selected) < needed and db is not None and supplement_ctx is not None:
+            from ..services.recommendation_service import _cascade_find_candidates
+            cascade_results = _cascade_find_candidates(
+                db=db,
+                tag_ids=supplement_ctx.tag_ids,
+                knowledge_ids=supplement_ctx.knowledge_ids,
+                document_id=supplement_ctx.document_id,
+                question_text=supplement_ctx.question_text,
+                limit=(needed - len(selected)) * 3,
+                exclude=global_selected,
+                enable_text_match=True,
+            )
+            # 只取当前题型的结果
+            for c_type, c_id, obj, reason in cascade_results:
+                if len(selected) >= needed:
+                    break
+                if c_type != q_type:
+                    continue
+                if (c_type, c_id) in global_selected:
+                    continue
+                fp, level = extract_fingerprint(db, c_type, c_id, getattr(obj, "question_text", None))
+                selected.append(QuestionCandidate(
+                    question_type=c_type,
+                    question_id=c_id,
+                    question_obj=obj,
+                    fingerprint=fp,
+                    fingerprint_level=level,
+                    score=0.0,
+                ))
+                global_selected.add((c_type, c_id))
+
+        # ── 最后兜底：从题库随机补充 ──
+        if len(selected) < needed and db is not None:
+            model = QUESTION_MODEL_MAP.get(q_type)
+            if model:
+                exclude_ids = {c.question_id for c in selected}
+                supplement = (
+                    db.query(model)
+                    .filter(~model.id.in_(exclude_ids) if exclude_ids else True)
+                    .order_by(func.rand())
+                    .limit(needed - len(selected))
+                    .all()
+                )
+                for q in supplement:
+                    if (q_type, q.id) in global_selected:
+                        continue
+                    fp, level = extract_fingerprint(db, q_type, q.id, getattr(q, "question_text", None))
+                    selected.append(QuestionCandidate(
+                        question_type=q_type,
+                        question_id=q.id,
+                        question_obj=q,
+                        fingerprint=fp,
+                        fingerprint_level=level,
+                        score=0.0,
+                    ))
+                    global_selected.add((q_type, q.id))
 
         result[q_type] = selected
-
-    # ── 兜底：如果贪心去重后某题型未达目标数量，放宽约束补齐 ──
-    for q_type in TYPE_PRIORITY:
-        needed = actual_counts.get(q_type, 0)
-        current = result.get(q_type, [])
-        if len(current) >= needed:
-            continue
-        selected_ids = {c.question_id for c in current}
-        remaining = [c for c in candidates_by_type.get(q_type, []) if c.question_id not in selected_ids]
-        random.shuffle(remaining)
-        for c in remaining:
-            if len(current) >= needed:
-                break
-            current.append(c)
 
     return result
 

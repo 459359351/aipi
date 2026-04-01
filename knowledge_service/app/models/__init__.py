@@ -10,11 +10,16 @@ from .document_tag_rel import DocumentTagRel
 from .question_audit_log import QuestionAuditLog
 from .user_profile import UserProfile
 from .user_question_behavior import UserQuestionBehavior
+from .choice_answer import ChoiceAnswer, CHOICE_TYPE_MAP
+from .answer import Answer
+from .assessment_batch import AssessmentBatch
+from .user import User
 
 __all__ = [
     "Document", "KnowledgePoint", "Tag", "FatherTag", "knowledge_tag_rel", "question_tag_rel",
     "QuestionKnowledgeRel", "DocumentTagRel",
     "SingleChoice", "MultipleChoice", "Judge", "Essay", "QuestionTask",
     "QuestionAuditLog", "UserProfile", "UserQuestionBehavior",
+    "ChoiceAnswer", "CHOICE_TYPE_MAP", "Answer", "AssessmentBatch", "User",
 ]
 

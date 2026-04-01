@@ -20,7 +20,9 @@ from ..services.recommendation_service import (
     recommend_by_question,
     recommend_by_tags,
     recommend_question_set,
+    get_random_wrong_question,
 )
+from ..services.batch_service import parse_bank_id_range
 from ..models.user_question_behavior import UserQuestionBehavior
 from ..models.user_profile import UserProfile
 
@@ -152,34 +154,65 @@ async def record_behavior(body: dict, db: Session = Depends(get_db)):
 
 
 @router.get(
+    "/wrong-question/random",
+    summary="基于错题推荐一道相似练习题",
+)
+async def get_random_wrong(
+    user_id: int = Query(..., description="用户ID"),
+    bank_ids: str = Query(..., description="题库ID范围，如 '3,4,5' 或 '1-5'"),
+    essay_score_threshold: int = Query(0, description="简答题错误阈值"),
+    db: Session = Depends(get_db),
+):
+    """随机选一道错题为种子，通过推荐管道返回相似题"""
+    parsed_bank_ids = parse_bank_id_range(bank_ids)
+    if not parsed_bank_ids:
+        raise HTTPException(status_code=400, detail="bank_ids 解析为空")
+    result = get_random_wrong_question(
+        db=db,
+        user_id=user_id,
+        bank_ids=parsed_bank_ids,
+        essay_score_threshold=essay_score_threshold,
+    )
+    if result is None:
+        return {"found": False, "question": None, "seed_question": None}
+    return {"found": True, "question": result["question"], "seed_question": result["seed_question"]}
+
+
+@router.get(
     "/question-set",
     response_model=QuestionSetResponse,
     summary="获取套题（跨题型知识点不重复）",
 )
 async def get_question_set(
-    mode: str = Query(..., description="出题模式：document/interest/tags"),
+    mode: str = Query(..., description="出题模式：document/interest/tags/wrong_questions"),
     name: str = Query("", description="姓名（用作 user_id）"),
     document_id: int | None = Query(None, description="mode=document 时必填"),
     interests: str = Query("", description="mode=interest 时，逗号分隔的兴趣标签"),
     position: str = Query("", description="mode=tags 时的岗位"),
     level: str = Query("", description="mode=tags 时的级别"),
     tag_ids: str = Query("", description="mode=tags 时，逗号分隔的标签 ID"),
+    user_id: int | None = Query(None, description="mode=wrong_questions 时必填，用户ID（int）"),
+    bank_ids: str = Query("", description="mode=wrong_questions 时必填，逗号分隔的题库 ID 或范围"),
+    essay_score_threshold: int = Query(0, description="mode=wrong_questions 时，简答题错误阈值"),
     db: Session = Depends(get_db),
 ):
     parsed_interests = [x.strip() for x in interests.split(",") if x.strip()] if interests else None
     parsed_tag_ids = [int(x.strip()) for x in tag_ids.split(",") if x.strip()] if tag_ids else None
-    user_id = name.strip() or None
+    name_user_id = name.strip() or None
 
     try:
         return recommend_question_set(
             db=db,
             mode=mode,
-            user_id=user_id,
+            user_id=name_user_id,
             document_id=document_id,
             interests=parsed_interests,
             tag_ids=parsed_tag_ids,
             position=position.strip() or None,
             level=level.strip() or None,
+            wrong_user_id=user_id,
+            bank_ids=bank_ids.strip() or None,
+            essay_score_threshold=essay_score_threshold,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
