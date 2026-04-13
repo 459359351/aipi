@@ -199,22 +199,35 @@ async def generate_questions(
     if kp_count == 0:
         raise HTTPException(status_code=400, detail="该文档没有已解析的知识点")
 
-    # 单选/多选/判断：0 表示按知识点数量出题；简答题 0 表示不出
-    effective_single = kp_count if body.single_choice_count <= 0 else body.single_choice_count
-    effective_multiple = kp_count if body.multiple_choice_count <= 0 else body.multiple_choice_count
-    effective_judge = kp_count if body.judge_count <= 0 else body.judge_count
-    effective_essay = body.essay_count
+    # count 字段语义: None=跳过, 0=按知识点数(单选/多选/判断)或不出(简答), >0=指定数量
+    # 必须先判 is None 再做数值比较，否则 None <= 0 抛 TypeError
+    def _effective(count, fallback_kp):
+        """计算有效数量: None→0(跳过), 0→kp_count(按知识点), >0→count"""
+        if count is None:
+            return 0
+        return fallback_kp if count <= 0 else count
+
+    effective_single = _effective(body.single_choice_count, kp_count)
+    effective_multiple = _effective(body.multiple_choice_count, kp_count)
+    effective_judge = _effective(body.judge_count, kp_count)
+    # 简答题: None=跳过, 0=不出, >0=指定数量 (不走 kp_count 替代)
+    effective_essay = 0 if body.essay_count is None else body.essay_count
+
     total_effective = effective_single + effective_multiple + effective_judge + effective_essay
     if total_effective == 0:
-        raise HTTPException(status_code=400, detail="至少需要一种题型：填空或填 0 表示单选/多选/判断按知识点数出题")
+        raise HTTPException(status_code=400, detail="至少需要启用一种题型并设置数量（0=按知识点数出题，取消勾选=不出该题型）")
 
-    config = {
-        "single_choice_count": body.single_choice_count,
-        "multiple_choice_count": body.multiple_choice_count,
-        "multiple_choice_options": body.multiple_choice_options,
-        "judge_count": body.judge_count,
-        "essay_count": body.essay_count,
-    }
+    # 构建 config dict：省略 None 值字段，task 侧 config.get() 不带默认值即可判断跳过
+    config = {}
+    if body.single_choice_count is not None:
+        config["single_choice_count"] = body.single_choice_count
+    if body.multiple_choice_count is not None:
+        config["multiple_choice_count"] = body.multiple_choice_count
+        config["multiple_choice_options"] = body.multiple_choice_options
+    if body.judge_count is not None:
+        config["judge_count"] = body.judge_count
+    if body.essay_count is not None:
+        config["essay_count"] = body.essay_count
 
     task = QuestionTask(
         document_id=body.document_id,

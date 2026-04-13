@@ -72,7 +72,7 @@
 
         <!-- Two-column layout: left=tags+edit, right=doc preview -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-            <div class="bg-white rounded-lg shadow-md p-6">
+            <div id="editPanel" class="bg-white rounded-lg shadow-md p-6">
                 <h3 class="text-base font-semibold text-gray-800 mb-3">AI 标签推荐与人工补充</h3>
             <!-- Row 1: 一级标签 -->
             <div class="mb-3">
@@ -82,15 +82,19 @@
                     <option value="">加载中...</option>
                 </select>
             </div>
-            <!-- Row 2: AI 推荐标签 -->
-            <div class="mb-3">
+            <!-- Row 2: 二级标签（合并 AI 推荐） -->
+            <div class="mb-3" id="subTagSection">
                 <div class="flex items-center gap-2 mb-1.5">
+                    <label class="text-xs font-medium text-gray-500">二级标签（点击加入）</label>
                     <button type="button" id="aiSuggestBtn"
-                        class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">AI 推荐标签</button>
-                    <span class="text-xs text-gray-400">推荐标签（点击加入）</span>
+                        class="px-2.5 py-1 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700">AI 推荐标签</button>
                 </div>
-                <div id="suggestTagList" class="min-h-[28px]"></div>
+                <div id="subTagList" class="min-h-[28px]">
+                    <span class="text-gray-400 text-xs">请先选择一级标签</span>
+                </div>
             </div>
+            <!-- suggestTagList kept as hidden anchor for legacy JS refs -->
+            <div id="suggestTagList" class="hidden"></div>
             <!-- Row 3: 搜索标签（已隐藏） -->
             <div class="mb-2 hidden">
                 <label class="block text-xs font-medium text-gray-500 mb-1">搜索已有标签</label>
@@ -142,6 +146,10 @@
                 </div>
                 <button type="button" id="saveQuestionBtn"
                     class="px-4 py-2 bg-emerald-700 text-white rounded-md hover:bg-emerald-800">审核提交通过</button>
+                <div id="submitErrorInline" class="hidden mt-3 px-3 py-2 rounded-md border border-red-300 bg-red-50 text-red-700 text-sm flex items-start gap-2">
+                    <span id="submitErrorText" class="flex-1"></span>
+                    <button type="button" id="submitErrorClose" class="text-red-400 hover:text-red-700 text-lg leading-none">&times;</button>
+                </div>
             </div>
             </div>
             <!-- Right column: document preview -->
@@ -157,6 +165,16 @@
         </div>
     </div>
 
+    <!-- Toast 通知容器 -->
+    <div id="toastContainer" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none" style="max-width: 360px;"></div>
+
+    <style>
+        @keyframes toast-slide-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes toast-fade-out { from { opacity: 1; } to { opacity: 0; } }
+        .toast-enter { animation: toast-slide-in 0.3s ease-out forwards; }
+        .toast-exit  { animation: toast-fade-out 0.25s ease-in forwards; }
+    </style>
+
     <script>
         const API_BASE = '/api/v1';
         const tagAuditMsg = document.getElementById('tagAuditMsg');
@@ -169,7 +187,44 @@
         const aiSuggestBtn = document.getElementById('aiSuggestBtn');
         const searchTagsBtn = document.getElementById('searchTagsBtn');
         const saveManualTagsBtn = document.getElementById('saveManualTagsBtn');
+        const toastContainer = document.getElementById('toastContainer');
 
+        function showToast(message, type = 'info', duration) {
+            const colorMap = {
+                success: 'bg-emerald-50 text-emerald-800 border-emerald-300',
+                error:   'bg-red-50 text-red-800 border-red-300',
+                info:    'bg-blue-50 text-blue-800 border-blue-300',
+            };
+            const defaultDuration = { success: 3000, error: 5000, info: 3000 };
+            const dur = duration ?? defaultDuration[type] ?? 3000;
+            const colors = colorMap[type] || colorMap.info;
+
+            const el = document.createElement('div');
+            el.className = `pointer-events-auto flex items-start gap-2 px-4 py-3 rounded-lg border shadow-lg text-sm toast-enter ${colors}`;
+            const msgSpan = document.createElement('span');
+            msgSpan.className = 'flex-1';
+            msgSpan.textContent = message;
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'toast-close ml-2 text-lg leading-none opacity-60 hover:opacity-100';
+            closeBtn.innerHTML = '&times;';
+            el.appendChild(msgSpan);
+            el.appendChild(closeBtn);
+            toastContainer.appendChild(el);
+
+            closeBtn.addEventListener('click', () => removeToast(el));
+            const timer = setTimeout(() => removeToast(el), dur);
+            el._toastTimer = timer;
+        }
+
+        function removeToast(el) {
+            if (el._removed) return;
+            el._removed = true;
+            clearTimeout(el._toastTimer);
+            el.classList.remove('toast-enter');
+            el.classList.add('toast-exit');
+            el.addEventListener('animationend', () => el.remove(), { once: true });
+            setTimeout(() => { if (el.parentNode) el.remove(); }, 500);
+        }
 
         const state = {
             currentQuestionId: 0,
@@ -178,6 +233,7 @@
             pendingPage: 1,
             pendingPageSize: 10,
             pendingTagNames: new Map(), // name → 'ai' | 'human'
+            subTagItems: [],
             aiSuggestedTags: [],
             aiCandidateTags: [],
             loading: {
@@ -185,7 +241,10 @@
                 searchTags: false,
                 saveManual: false,
             },
+            subTagRequestId: 0,
         };
+
+        function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
         function normalizeTagName(name) {
             return String(name || '').trim().replace(/\s+/g, ' ');
@@ -343,12 +402,8 @@
         }
 
         function renderSuggestTags() {
-            const suggested = state.aiSuggestedTags || [];
-            if (suggested.length) {
-                suggestTagListEl.innerHTML = `<div class="flex flex-wrap">${suggested.map(name => `<button type="button" class="add-ai-tag-btn text-xs px-2 py-1 rounded border border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 mr-1.5 mb-1.5" data-tag-name="${name}">+ ${name}</button>`).join('')}</div>`;
-            } else {
-                suggestTagListEl.innerHTML = '';
-            }
+            // AI推荐标签已合并到二级标签区域高亮显示，此处只渲染待提交标签池
+            suggestTagListEl.innerHTML = '';
 
             const pendingEntries = [...state.pendingTagNames.entries()];
             const count = pendingEntries.length;
@@ -384,6 +439,60 @@
             return document.getElementById('fatherTagSelect').value;
         }
 
+        function renderSubTagList() {
+            const subTagListEl = document.getElementById('subTagList');
+            const items = state.subTagItems || [];
+            const aiSet = new Set((state.aiSuggestedTags || []).map(n => normalizeTagName(n)));
+            if (!items.length && !aiSet.size) {
+                subTagListEl.innerHTML = '<span class="text-gray-400 text-xs">该一级标签下暂无二级标签</span>';
+                return;
+            }
+            // Merge: sub-tags first, then any AI-recommended tags not already in the sub-tag list
+            const rendered = new Set();
+            let html = '';
+            for (const t of items) {
+                const name = t.tag_name;
+                const isAi = aiSet.has(normalizeTagName(name));
+                rendered.add(normalizeTagName(name));
+                const escaped = esc(name);
+                html += isAi
+                    ? `<button type="button" class="add-sub-tag-btn text-xs px-2 py-1 rounded border-2 border-blue-500 text-blue-800 bg-blue-100 hover:bg-blue-200 mr-1.5 mb-1.5 font-medium" data-tag-name="${escaped}" data-ai="1">+ ${escaped} <span class="text-[10px] bg-blue-600 text-white px-1 rounded ml-0.5">AI</span></button>`
+                    : `<button type="button" class="add-sub-tag-btn text-xs px-2 py-1 rounded border border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 mr-1.5 mb-1.5" data-tag-name="${escaped}">+ ${escaped}</button>`;
+            }
+            // AI-recommended tags not in sub-tag list (e.g., new candidates)
+            for (const name of aiSet) {
+                if (!rendered.has(name)) {
+                    const escaped = esc(name);
+                    html += `<button type="button" class="add-sub-tag-btn text-xs px-2 py-1 rounded border-2 border-blue-500 text-blue-800 bg-blue-100 hover:bg-blue-200 mr-1.5 mb-1.5 font-medium" data-tag-name="${escaped}" data-ai="1">+ ${escaped} <span class="text-[10px] bg-blue-600 text-white px-1 rounded ml-0.5">AI</span></button>`;
+                }
+            }
+            subTagListEl.innerHTML = `<div class="flex flex-wrap">${html}</div>`;
+        }
+
+        async function loadSubTags(fatherTag) {
+            const subTagListEl = document.getElementById('subTagList');
+            if (!fatherTag) {
+                state.subTagItems = [];
+                subTagListEl.innerHTML = '<span class="text-gray-400 text-xs">请先选择一级标签</span>';
+                return;
+            }
+            const requestId = ++state.subTagRequestId;
+            subTagListEl.innerHTML = '<span class="text-gray-400 text-xs">加载中...</span>';
+            try {
+                const r = await fetch(`${API_BASE}/tags/sub-tags?father_tag=${encodeURIComponent(fatherTag)}`);
+                if (requestId !== state.subTagRequestId) return;
+                const data = await r.json().catch(() => ({}));
+                if (requestId !== state.subTagRequestId) return;
+                if (!r.ok) { subTagListEl.innerHTML = '<span class="text-gray-400 text-xs">加载失败</span>'; return; }
+                state.subTagItems = data.items || [];
+                renderSubTagList();
+            } catch {
+                if (requestId === state.subTagRequestId) {
+                    subTagListEl.innerHTML = '<span class="text-gray-400 text-xs">加载失败</span>';
+                }
+            }
+        }
+
         async function aiSuggestTags() {
             if (state.loading.aiSuggest) return;
             const { qType, qId } = getCurrentQTypeAndId();
@@ -410,8 +519,9 @@
                 }
                 state.aiSuggestedTags = data.recommended_tags || data.suggested_tags || [];
                 state.aiCandidateTags = data.new_tag_candidates || [];
+                renderSubTagList();
                 renderSuggestTags();
-                setAuditMsg('AI 标签推荐完成，可点击标签加入本题', 'success');
+                showToast('AI 标签推荐完成，已高亮推荐标签', 'success');
             } finally {
                 state.loading.aiSuggest = false;
                 setBtnLoading(aiSuggestBtn, '', false);
@@ -523,19 +633,31 @@
             return payload;
         }
 
+        function showSubmitError(msg) {
+            const el = document.getElementById('submitErrorInline');
+            document.getElementById('submitErrorText').textContent = msg;
+            el.classList.remove('hidden');
+        }
+        function hideSubmitError() {
+            document.getElementById('submitErrorInline').classList.add('hidden');
+        }
+
         async function saveQuestion() {
             const { qType, qId } = getCurrentQTypeAndId();
             if (!qId || qId <= 0) {
-                setAuditMsg('请先在未审核列表中选择题目', 'error');
+                showToast('请先在未审核列表中选择题目', 'error');
+                showSubmitError('请先在未审核列表中选择题目');
                 return;
             }
             const payload = buildAuditSubmitPayload();
             if (!payload.father_tag) {
-                setAuditMsg('请先选择一级标签', 'error');
+                showToast('请先选择一级标签', 'error');
+                showSubmitError('请先选择一级标签');
                 return;
             }
             if (!payload.tag_ids.length && !payload.tag_names.length) {
-                setAuditMsg('请至少保留或添加一个标签后再提交', 'error');
+                showToast('请至少保留或添加一个标签后再提交', 'error');
+                showSubmitError('请至少保留或添加一个标签后再提交');
                 return;
             }
             const r = await fetch(`${API_BASE}/questions/${qType}/${qId}/audit-submit`, {
@@ -545,17 +667,22 @@
             });
             const data = await r.json().catch(() => ({}));
             if (!r.ok) {
-                setAuditMsg(data.detail || '审核提交失败', 'error');
+                const errMsg = data.detail || '审核提交失败';
+                showToast(errMsg, 'error');
+                showSubmitError(errMsg);
                 return;
             }
-            setAuditMsg('审核提交通过：标签已确认，题目已通过', 'success');
+            hideSubmitError();
+            showToast(`审核提交通过，题目 #${qId} 已通过`, 'success');
             state.currentQuestionId = 0;
             state.currentDocumentId = null;
             state.pendingTagNames = new Map();
+            state.subTagItems = [];
             state.aiSuggestedTags = [];
             state.aiCandidateTags = [];
             document.getElementById('qId').value = '';
             renderCurrentBanner();
+            renderSubTagList();
             renderSuggestTags();
             loadDocPreview(null);
             tagSearchListEl.innerHTML = '';
@@ -566,12 +693,15 @@
             state.currentQuestionId = Number(questionId);
             document.getElementById('qId').value = String(questionId);
             state.pendingTagNames = new Map();
+            state.subTagItems = [];
             state.aiSuggestedTags = [];
             state.aiCandidateTags = [];
             renderCurrentBanner();
             await loadQuestionDetail();
+            loadSubTags(getSelectedFatherTag());
             renderSuggestTags();
-            setAuditMsg('已加载题目，请手动点击“AI 推荐标签”触发推荐', 'info');
+            setAuditMsg('已加载题目，请手动点击”AI 推荐标签”触发推荐', 'info');
+            document.getElementById('editPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         document.getElementById('buildRelBtn').addEventListener('click', async () => {
@@ -660,6 +790,17 @@
         document.getElementById('searchTagsBtn').addEventListener('click', searchTags);
         document.getElementById('saveManualTagsBtn').addEventListener('click', saveManualTags);
         document.getElementById('saveQuestionBtn').addEventListener('click', saveQuestion);
+        document.getElementById('submitErrorClose').addEventListener('click', hideSubmitError);
+
+        document.getElementById('subTagList').addEventListener('click', (e) => {
+            const btn = e.target.closest('.add-sub-tag-btn');
+            if (!btn) return;
+            const source = btn.dataset.ai === '1' ? 'AI推荐' : '人工';
+            resolveTagAndAddToPending(btn.dataset.tagName || '', source);
+        });
+        document.getElementById('fatherTagSelect').addEventListener('change', () => {
+            loadSubTags(getSelectedFatherTag());
+        });
 
         async function loadFatherTagOptions() {
             const select = document.getElementById('fatherTagSelect');
