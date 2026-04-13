@@ -42,14 +42,18 @@
                 </div>
 
                 <!-- 题型数量配置 -->
-                <p class="text-sm text-gray-500 mb-3">单选、多选、判断题：填具体数量则按该数量出题；<strong>填 0 或不填</strong>表示按「知识点数量」出题（有多少个知识点就出多少道）。简答题为题目道数，可综合多个知识点成一道题。</p>
+                <p class="text-sm text-gray-500 mb-3">勾选需要的题型，<strong>填 0</strong> 表示按知识点数量出题；<strong>取消勾选</strong>则不出该题型。简答题为题目道数，可综合多个知识点成一道题。</p>
                 <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">单选题数量</label>
+                        <label class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1">
+                            <input type="checkbox" id="enableSingle" checked onchange="updateTypeToggles()"> 单选题数量
+                        </label>
                         <input type="number" id="singleCount" value="0" min="0" max="50" placeholder="0=按知识点数" class="w-full px-3 py-2 border border-gray-300 rounded-md">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">多选题数量</label>
+                        <label class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1">
+                            <input type="checkbox" id="enableMultiple" checked onchange="updateTypeToggles()"> 多选题数量
+                        </label>
                         <input type="number" id="multipleCount" value="0" min="0" max="50" placeholder="0=按知识点数" class="w-full px-3 py-2 border border-gray-300 rounded-md">
                     </div>
                     <div>
@@ -60,11 +64,15 @@
                         </select>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">判断题数量</label>
+                        <label class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1">
+                            <input type="checkbox" id="enableJudge" checked onchange="updateTypeToggles()"> 判断题数量
+                        </label>
                         <input type="number" id="judgeCount" value="0" min="0" max="50" placeholder="0=按知识点数" class="w-full px-3 py-2 border border-gray-300 rounded-md">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">简答题数量</label>
+                        <label class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1">
+                            <input type="checkbox" id="enableEssay" checked onchange="updateTypeToggles()"> 简答题数量
+                        </label>
                         <input type="number" id="essayCount" value="2" min="0" max="20" class="w-full px-3 py-2 border border-gray-300 rounded-md" title="简答题可综合多个知识点成一道题">
                         <p class="mt-0.5 text-xs text-gray-400">可综合多知识点成一道题</p>
                     </div>
@@ -122,6 +130,28 @@
 const API_BASE = '/api/v1';
 let currentTaskId = null;
 let pollTimer = null;
+
+function updateTypeToggles() {
+    const toggles = [
+        { cb: 'enableSingle', inputs: ['singleCount'] },
+        { cb: 'enableMultiple', inputs: ['multipleCount', 'multipleOptions'] },
+        { cb: 'enableJudge', inputs: ['judgeCount'] },
+        { cb: 'enableEssay', inputs: ['essayCount'] },
+    ];
+    let anyEnabled = false;
+    for (const { cb, inputs } of toggles) {
+        const checked = document.getElementById(cb).checked;
+        if (checked) anyEnabled = true;
+        for (const id of inputs) {
+            const el = document.getElementById(id);
+            el.disabled = !checked;
+            el.classList.toggle('opacity-50', !checked);
+        }
+    }
+    const btn = document.getElementById('generateBtn');
+    btn.disabled = !anyEnabled;
+    btn.title = anyEnabled ? '' : '请至少勾选一种题型';
+}
 
 async function loadDocuments() {
     try {
@@ -181,15 +211,21 @@ async function startGenerate() {
 
     const docIds = selected.map(opt => parseInt(opt.value));
 
-    const baseConfig = {
-        single_choice_count: parseInt(document.getElementById('singleCount').value) || 0,
-        multiple_choice_count: parseInt(document.getElementById('multipleCount').value) || 0,
-        multiple_choice_options: parseInt(document.getElementById('multipleOptions').value) || 4,
-        judge_count: parseInt(document.getElementById('judgeCount').value) || 0,
-        essay_count: parseInt(document.getElementById('essayCount').value) || 0,
-    };
-
-    // 单选/多选/判断为 0 时后端按知识点数出题，无需在此拦截
+    // 仅传启用的题型，未勾选的题型不传（后端默认 None = 跳过）
+    const baseConfig = {};
+    if (document.getElementById('enableSingle').checked) {
+        baseConfig.single_choice_count = parseInt(document.getElementById('singleCount').value) || 0;
+    }
+    if (document.getElementById('enableMultiple').checked) {
+        baseConfig.multiple_choice_count = parseInt(document.getElementById('multipleCount').value) || 0;
+        baseConfig.multiple_choice_options = parseInt(document.getElementById('multipleOptions').value) || 4;
+    }
+    if (document.getElementById('enableJudge').checked) {
+        baseConfig.judge_count = parseInt(document.getElementById('judgeCount').value) || 0;
+    }
+    if (document.getElementById('enableEssay').checked) {
+        baseConfig.essay_count = parseInt(document.getElementById('essayCount').value) || 0;
+    }
 
     const btn = document.getElementById('generateBtn');
     btn.disabled = true;
@@ -536,6 +572,7 @@ function esc(s) {
 // 页面加载
 loadDocuments();
 loadTaskHistory();
+updateTypeToggles();
 </script>
 </body>
 </html>

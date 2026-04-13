@@ -10,13 +10,20 @@ from pydantic import BaseModel, Field
 # ── 请求模型 ──────────────────────────────────────────────
 
 class QuestionGenerateRequest(BaseModel):
-    """出题请求"""
+    """出题请求
+
+    count 字段语义：
+    - None（不传 / 省略）：不生成该题型
+    - 0（单选/多选/判断）：按知识点数量出题
+    - 0（简答）：不生成
+    - >0：按指定数量出题
+    """
     document_id: int = Field(..., description="文档 ID（必须是已解析完成的文档）")
-    single_choice_count: int = Field(5, ge=0, le=50, description="单选题数量")
-    multiple_choice_count: int = Field(5, ge=0, le=50, description="多选题数量")
+    single_choice_count: Optional[int] = Field(None, ge=0, le=50, description="单选题数量，None=跳过，0=按知识点数")
+    multiple_choice_count: Optional[int] = Field(None, ge=0, le=50, description="多选题数量，None=跳过，0=按知识点数")
     multiple_choice_options: int = Field(4, ge=4, le=5, description="多选题选项数(4或5)")
-    judge_count: int = Field(5, ge=0, le=50, description="判断题数量")
-    essay_count: int = Field(2, ge=0, le=20, description="简答题数量")
+    judge_count: Optional[int] = Field(None, ge=0, le=50, description="判断题数量，None=跳过，0=按知识点数")
+    essay_count: Optional[int] = Field(None, ge=0, le=20, description="简答题数量，None=跳过，0=不生成")
 
 
 # ── 响应模型 ──────────────────────────────────────────────
