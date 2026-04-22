@@ -37,3 +37,6 @@ ENV/
 # Others
 **/files/
 **/docs/
+.omx/
+.context/
+.cursor/

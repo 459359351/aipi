@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..security.company_scope import CompanyScope, get_company_scope
 from ..schemas.recommendation import (
     ByDocumentRecommendationResponse,
     ByQuestionRecommendationResponse,
@@ -43,6 +44,7 @@ async def get_recommendations_by_document(
     include_manual: bool = Query(True, description="是否补充人工题"),
     user_id: str | None = Query(None, description="可选：用户ID，用于行为重排"),
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     try:
         data = recommend_by_document(
@@ -54,6 +56,7 @@ async def get_recommendations_by_document(
             essay_count=essay_count,
             include_manual=include_manual,
             user_id=user_id,
+            scope=scope,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -71,6 +74,7 @@ async def get_recommendations_by_question(
     limit: int = Query(10, ge=1, le=50, description="推荐数量上限"),
     user_id: str | None = Query(None, description="可选：用户ID，用于行为重排"),
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     try:
         data = recommend_by_question(
@@ -79,6 +83,7 @@ async def get_recommendations_by_question(
             question_id=question_id,
             limit=limit,
             user_id=user_id,
+            scope=scope,
         )
     except ValueError as exc:
         detail = str(exc)
@@ -93,13 +98,16 @@ async def get_recommendations_by_question(
     "/build-manual-knowledge-rel",
     summary="为人工作业题目生成知识点关联",
 )
-async def post_build_manual_knowledge_rel(db: Session = Depends(get_db)):
+async def post_build_manual_knowledge_rel(
+    db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
+):
     """
     遍历四张题库表中 document_id 为空的题目，根据题干与知识点标题/内容的简单匹配，
     自动写入 question_knowledge_rel。用于支持「按错题推荐」时也能召回人工题。
     """
     try:
-        result = build_manual_question_knowledge_rel(db)
+        result = build_manual_question_knowledge_rel(db, scope=scope)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return result
@@ -116,6 +124,7 @@ async def get_recommendations_by_profile(
     judge_count: int = Query(5, ge=0, le=100),
     essay_count: int = Query(2, ge=0, le=50),
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     try:
         return recommend_by_profile(
@@ -125,6 +134,7 @@ async def get_recommendations_by_profile(
             multiple_count=multiple_count,
             judge_count=judge_count,
             essay_count=essay_count,
+            scope=scope,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -134,7 +144,11 @@ async def get_recommendations_by_profile(
     "/behaviors/record",
     summary="记录用户作答行为（用于后续推荐重排）",
 )
-async def record_behavior(body: dict, db: Session = Depends(get_db)):
+async def record_behavior(
+    body: dict,
+    db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
+):
     user_id = str(body.get("user_id") or "").strip()
     question_type = str(body.get("question_type") or "").strip().lower()
     question_id = int(body.get("question_id") or 0)
@@ -162,6 +176,7 @@ async def get_random_wrong(
     bank_ids: str = Query(..., description="题库ID范围，如 '3,4,5' 或 '1-5'"),
     essay_score_threshold: int = Query(0, description="简答题错误阈值"),
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     """随机选一道错题为种子，通过推荐管道返回相似题"""
     parsed_bank_ids = parse_bank_id_range(bank_ids)
@@ -172,6 +187,7 @@ async def get_random_wrong(
         user_id=user_id,
         bank_ids=parsed_bank_ids,
         essay_score_threshold=essay_score_threshold,
+        scope=scope,
     )
     if result is None:
         return {"found": False, "question": None, "seed_question": None}
@@ -195,6 +211,7 @@ async def get_question_set(
     bank_ids: str = Query("", description="mode=wrong_questions 时必填，逗号分隔的题库 ID 或范围"),
     essay_score_threshold: int = Query(0, description="mode=wrong_questions 时，简答题错误阈值"),
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     parsed_interests = [x.strip() for x in interests.split(",") if x.strip()] if interests else None
     parsed_tag_ids = [int(x.strip()) for x in tag_ids.split(",") if x.strip()] if tag_ids else None
@@ -213,6 +230,7 @@ async def get_question_set(
             wrong_user_id=user_id,
             bank_ids=bank_ids.strip() or None,
             essay_score_threshold=essay_score_threshold,
+            scope=scope,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -233,6 +251,7 @@ async def get_recommendations_by_tags(
     position: str = Query("", description="可选：岗位，用于匹配额外标签"),
     level: str = Query("", description="可选：级别，用于匹配额外标签"),
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     parsed_ids = [int(x.strip()) for x in tag_ids.split(",") if x.strip()]
     if not parsed_ids:
@@ -248,6 +267,7 @@ async def get_recommendations_by_tags(
             user_id=user_id,
             position=position.strip() or None,
             level=level.strip() or None,
+            scope=scope,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -257,7 +277,11 @@ async def get_recommendations_by_tags(
     "/behaviors/batch-record",
     summary="批量记录用户作答行为",
 )
-async def batch_record_behavior(body: dict, db: Session = Depends(get_db)):
+async def batch_record_behavior(
+    body: dict,
+    db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
+):
     user_id = str(body.get("user_id") or "").strip()
     answers = body.get("answers") or []
     if not user_id:
@@ -286,7 +310,11 @@ async def batch_record_behavior(body: dict, db: Session = Depends(get_db)):
     "/profiles/upsert",
     summary="创建/更新用户画像",
 )
-async def upsert_profile(body: dict, db: Session = Depends(get_db)):
+async def upsert_profile(
+    body: dict,
+    db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
+):
     user_id = str(body.get("user_id") or "").strip()
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id 必填")
@@ -304,4 +332,3 @@ async def upsert_profile(body: dict, db: Session = Depends(get_db)):
     profile.interests = json.dumps(interests, ensure_ascii=False)
     db.commit()
     return {"upserted": True, "user_id": user_id}
-

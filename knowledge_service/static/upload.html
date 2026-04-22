@@ -195,6 +195,29 @@
         let allSubTags = [];             // [{id, tag_name, _fatherTag}]  按所选一级标签聚合
         let selectedSubTagIds = [];      // [id, ...]
 
+        function getScopeContext() {
+            const params = new URLSearchParams(window.location.search);
+            const role = params.get('scope_role') || localStorage.getItem('demo_scope_role') || 'global_admin';
+            const companyId = params.get('scope_company_id') || localStorage.getItem('demo_scope_company_id') || 'GLOBAL';
+            const targetIdsRaw = params.get('target_company_ids') || localStorage.getItem('demo_target_company_ids') || '';
+            const targetIds = targetIdsRaw
+                ? targetIdsRaw.split(',').map(v => v.trim()).filter(Boolean)
+                : [companyId];
+            return { role, companyId, targetIds };
+        }
+
+        function withScope(url) {
+            const scopedUrl = new URL(url, window.location.origin);
+            const scope = getScopeContext();
+            scopedUrl.searchParams.set('scope_role', scope.role);
+            scopedUrl.searchParams.set('scope_company_id', scope.companyId);
+            return `${scopedUrl.pathname}${scopedUrl.search}`;
+        }
+
+        function scopedFetch(url, options) {
+            return fetch(withScope(url), options);
+        }
+
         // ── 初始化加载一级标签 ────────────────────────────────
         async function loadFatherTags() {
             try {
@@ -426,6 +449,7 @@
 
             const uploadUser = document.getElementById('uploadUser').value;
             if (uploadUser) formData.append('upload_user', uploadUser);
+            formData.append('target_company_ids', JSON.stringify(getScopeContext().targetIds));
 
             // 显示进度条
             progressContainer.classList.remove('hidden');
@@ -433,7 +457,7 @@
             submitBtn.disabled = true;
 
             try {
-                const response = await fetch('/api/v1/documents/upload', {
+                const response = await scopedFetch('/api/v1/documents/upload', {
                     method: 'POST',
                     body: formData
                 });
@@ -443,7 +467,8 @@
                 if (response.ok) {
                     showResult(`上传成功！文档 ID: ${data.id}<br>状态: ${data.status}<br>${data.message}`, 'success');
                     setTimeout(() => {
-                        window.location.href = '/static/list.html';
+                        const scope = getScopeContext();
+                        window.location.href = `/static/list.html?scope_role=${encodeURIComponent(scope.role)}&scope_company_id=${encodeURIComponent(scope.companyId)}`;
                     }, 2000);
                 } else {
                     showResult(`上传失败: ${data.detail || '未知错误'}`, 'error');

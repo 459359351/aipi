@@ -22,7 +22,10 @@ from ..models.father_tag import FatherTag
 from ..models.question_tag_rel import question_tag_rel
 from ..models.question_audit_log import QuestionAuditLog
 from sqlalchemy import select, delete, func, case
+from ..security.company_scope import CompanyScope, apply_document_scope, apply_question_scope, get_company_scope
 from ..services.knowledge_extractor import extract_knowledge_points_from_qa, extract_tags_from_qa_direct
+from ..services import document_service
+from ..services.question_scope_service import get_visible_question, update_question_company_scopes_if_needed
 from ..schemas.question import (
     QuestionGenerateRequest,
     QuestionGenerateResponse,
@@ -180,12 +183,13 @@ async def generate_questions(
     body: QuestionGenerateRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     """
     根据文档的已解析知识点，创建后台出题任务。
     返回 task_id 供后续轮询查询进度。
     """
-    doc = db.query(Document).filter(Document.id == body.document_id).first()
+    doc = document_service.get_document_by_id(db, body.document_id, scope=scope)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
     if doc.status != "completed":
@@ -221,13 +225,36 @@ async def generate_questions(
     config = {}
     if body.single_choice_count is not None:
         config["single_choice_count"] = body.single_choice_count
+        if body.single_choice_difficulty_strategy is not None:
+            config["single_choice_difficulty_strategy"] = body.single_choice_difficulty_strategy
     if body.multiple_choice_count is not None:
         config["multiple_choice_count"] = body.multiple_choice_count
         config["multiple_choice_options"] = body.multiple_choice_options
+        if body.multiple_choice_difficulty_strategy is not None:
+            config["multiple_choice_difficulty_strategy"] = body.multiple_choice_difficulty_strategy
     if body.judge_count is not None:
         config["judge_count"] = body.judge_count
+        if body.judge_difficulty_strategy is not None:
+            config["judge_difficulty_strategy"] = body.judge_difficulty_strategy
     if body.essay_count is not None:
         config["essay_count"] = body.essay_count
+        if body.essay_difficulty_strategy is not None:
+            config["essay_difficulty_strategy"] = body.essay_difficulty_strategy
+
+    # 请求期快验证策略（不合法直接返回 400，而不是让后台任务在 minutes 后 fail）
+    for key in (
+        "single_choice_difficulty_strategy",
+        "multiple_choice_difficulty_strategy",
+        "judge_difficulty_strategy",
+        "essay_difficulty_strategy",
+    ):
+        strategy = config.get(key)
+        if strategy is not None:
+            try:
+                from ..services.difficulty_allocator import resolve_strategy
+                resolve_strategy(strategy)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"{key}: {e}")
 
     task = QuestionTask(
         document_id=body.document_id,
@@ -255,9 +282,15 @@ async def generate_questions(
 
 
 @router.get("/tasks/{task_id}", response_model=QuestionTaskResponse, summary="查询出题任务状态")
-async def get_question_task(task_id: int, db: Session = Depends(get_db)):
+async def get_question_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
+):
     """根据 task_id 查询出题任务状态和结果"""
-    task = db.query(QuestionTask).filter(QuestionTask.id == task_id).first()
+    task_query = db.query(QuestionTask).join(Document, Document.id == QuestionTask.document_id)
+    task_query = apply_document_scope(task_query, scope, Document.id)
+    task = task_query.filter(QuestionTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return task
@@ -269,9 +302,11 @@ async def list_question_tasks(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     """分页获取出题任务列表，可按 document_id 筛选"""
-    query = db.query(QuestionTask)
+    query = db.query(QuestionTask).join(Document, Document.id == QuestionTask.document_id)
+    query = apply_document_scope(query, scope, Document.id)
     if document_id is not None:
         query = query.filter(QuestionTask.document_id == document_id)
     total = query.count()
@@ -290,9 +325,10 @@ async def list_question_tasks(
 async def get_questions_by_document(
     document_id: int,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     """查询某文档下所有已生成的题目（按题型分类返回，含该文档下全部任务）"""
-    doc = db.query(Document).filter(Document.id == document_id).first()
+    doc = document_service.get_document_by_id(db, document_id, scope=scope)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
@@ -334,9 +370,12 @@ async def get_questions_by_document(
 async def get_questions_by_task(
     task_id: int,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     """查询某次出题任务生成的题目（按题型分类），数量与任务 result_summary 一致"""
-    task = db.query(QuestionTask).filter(QuestionTask.id == task_id).first()
+    task_query = db.query(QuestionTask).join(Document, Document.id == QuestionTask.document_id)
+    task_query = apply_document_scope(task_query, scope, Document.id)
+    task = task_query.filter(QuestionTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     document_id = task.document_id
@@ -371,6 +410,13 @@ async def get_questions_by_task(
     )
 
 
+DIFFICULTY_FILTER_MAP = {
+    "simple": "简单",
+    "normal": "一般",
+    "hard": "困难",
+}
+
+
 @router.get(
     "/audit/pending",
     summary="按题型获取待审核题目列表",
@@ -378,15 +424,54 @@ async def get_questions_by_task(
 async def list_pending_audit_questions(
     question_type: str = Query(..., description="single/multiple/judge/essay"),
     keyword: Optional[str] = Query(None, description="题干关键字"),
+    difficulty: Optional[str] = Query(
+        None,
+        description="难度过滤：simple/normal/hard/unlabeled/all；不传或 all 表示不过滤",
+    ),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=200),
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     q_type = _normalize_question_type(question_type)
     model = QUESTION_MODEL_MAP[q_type]
     query = db.query(model).filter(model.review_status != 1)
+    query = apply_question_scope(query, scope, q_type, model)
     if keyword:
         query = query.filter(model.question_text.contains(keyword))
+
+    difficulty_key = (difficulty or "").strip().lower() or "all"
+    if difficulty_key != "all":
+        if difficulty_key == "unlabeled":
+            query = query.filter(
+                ~select(question_tag_rel.c.id)
+                .join(Tag, Tag.id == question_tag_rel.c.tag_id)
+                .where(
+                    (question_tag_rel.c.question_type == q_type)
+                    & (question_tag_rel.c.question_id == model.id)
+                    & (Tag.tag_type == "difficulty")
+                )
+                .exists()
+            )
+        elif difficulty_key in DIFFICULTY_FILTER_MAP:
+            target_name = DIFFICULTY_FILTER_MAP[difficulty_key]
+            query = query.filter(
+                select(question_tag_rel.c.id)
+                .join(Tag, Tag.id == question_tag_rel.c.tag_id)
+                .where(
+                    (question_tag_rel.c.question_type == q_type)
+                    & (question_tag_rel.c.question_id == model.id)
+                    & (Tag.tag_type == "difficulty")
+                    & (Tag.tag_name == target_name)
+                )
+                .exists()
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="difficulty 必须是 simple/normal/hard/unlabeled/all",
+            )
+
     total = query.count()
     rows = query.order_by(model.updated_at.desc(), model.id.desc()).offset(skip).limit(limit).all()
     question_ids = [int(r.id) for r in rows]
@@ -435,6 +520,7 @@ async def list_pending_audit_questions(
 async def resolve_single_tag(
     body: dict,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     t0 = time.time()
     tag_name = body.get("tag_name")
@@ -477,10 +563,10 @@ async def get_question_detail(
     question_type: str,
     question_id: int,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     q_type = _normalize_question_type(question_type)
-    model = QUESTION_MODEL_MAP[q_type]
-    obj = db.query(model).filter(model.id == question_id).first()
+    obj = get_visible_question(db, scope, q_type, question_id)
     if not obj:
         raise HTTPException(status_code=404, detail="题目不存在")
 
@@ -534,10 +620,14 @@ async def get_question_tags(
     question_type: str,
     question_id: int,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     q_type = question_type.strip().lower()
     if q_type not in ("single", "multiple", "judge", "essay"):
         raise HTTPException(status_code=400, detail="question_type 必须是 single/multiple/judge/essay")
+    obj = get_visible_question(db, scope, q_type, question_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="题目不存在")
     rows = db.execute(
         select(Tag.id, Tag.tag_name, Tag.tag_type, Tag.is_enabled, question_tag_rel.c.is_confirmed)
         .select_from(question_tag_rel.join(Tag, question_tag_rel.c.tag_id == Tag.id))
@@ -569,6 +659,7 @@ async def set_question_tags(
     question_id: int,
     body: dict,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     """
     body 支持两种方式：
@@ -579,6 +670,9 @@ async def set_question_tags(
     q_type = question_type.strip().lower()
     if q_type not in ("single", "multiple", "judge", "essay"):
         raise HTTPException(status_code=400, detail="question_type 必须是 single/multiple/judge/essay")
+    obj = get_visible_question(db, scope, q_type, question_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="题目不存在")
 
     t0 = time.time()
     tag_ids = body.get("tag_ids") or []
@@ -621,13 +715,18 @@ async def set_question_tags(
                 existing_hit_count += 1
             resolved_ids.add(int(tag.id))
 
-    # 覆盖写入
-    db.execute(
-        delete(question_tag_rel).where(
-            (question_tag_rel.c.question_type == q_type) &
-            (question_tag_rel.c.question_id == question_id)
-        )
+    # 覆盖写入普通标签，但保留难度标签；难度由 audit-submit 的 difficulty 字段维护。
+    difficulty_tag_ids = {
+        int(t.id) for t in db.query(Tag.id).filter(Tag.tag_type == "difficulty").all()
+    }
+    resolved_ids -= difficulty_tag_ids
+    delete_stmt = delete(question_tag_rel).where(
+        (question_tag_rel.c.question_type == q_type) &
+        (question_tag_rel.c.question_id == question_id)
     )
+    if difficulty_tag_ids:
+        delete_stmt = delete_stmt.where(~question_tag_rel.c.tag_id.in_(difficulty_tag_ids))
+    db.execute(delete_stmt)
     for tid in resolved_ids:
         db.execute(
             question_tag_rel.insert().values(
@@ -662,10 +761,14 @@ async def confirm_question_tags(
     question_id: int,
     body: dict,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     q_type = question_type.strip().lower()
     if q_type not in ("single", "multiple", "judge", "essay"):
         raise HTTPException(status_code=400, detail="question_type 必须是 single/multiple/judge/essay")
+    obj = get_visible_question(db, scope, q_type, question_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="题目不存在")
     tag_ids = body.get("tag_ids") or []
     confirmed = 1 if int(body.get("confirmed", 1)) == 1 else 0
     updated = 0
@@ -702,10 +805,10 @@ async def edit_question(
     question_id: int,
     body: dict,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     q_type = _normalize_question_type(question_type)
-    model = QUESTION_MODEL_MAP[q_type]
-    obj = db.query(model).filter(model.id == question_id).first()
+    obj = get_visible_question(db, scope, q_type, question_id)
     if not obj:
         raise HTTPException(status_code=404, detail="题目不存在")
 
@@ -714,6 +817,13 @@ async def edit_question(
     remark = body.get("remark")
 
     changed_fields = _apply_question_edits(q_type, obj, body)
+    update_question_company_scopes_if_needed(
+        db,
+        scope,
+        q_type,
+        obj,
+        body.get("target_company_ids"),
+    )
 
     # 一步审核生效：若请求未显式传 review_status，默认改为通过
     if "review_status" not in body:
@@ -747,11 +857,11 @@ async def audit_submit_question(
     question_id: int,
     body: dict,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     t0 = time.time()
     q_type = _normalize_question_type(question_type)
-    model = QUESTION_MODEL_MAP[q_type]
-    obj = db.query(model).filter(model.id == question_id).first()
+    obj = get_visible_question(db, scope, q_type, question_id)
     if not obj:
         raise HTTPException(status_code=404, detail="题目不存在")
 
@@ -767,6 +877,25 @@ async def audit_submit_question(
     default_tag_type = body.get("default_tag_type") or "human"
     default_tag_enabled = body.get("default_tag_enabled")
     father_tag = body.get("father_tag") or None
+    update_question_company_scopes_if_needed(
+        db,
+        scope,
+        q_type,
+        obj,
+        body.get("target_company_ids"),
+    )
+
+    # 难度字段：simple/normal/hard（非空时覆盖难度标签），缺省或 null 时隐式保留并提升现有难度 rel
+    difficulty_raw = body.get("difficulty")
+    difficulty_key = (str(difficulty_raw).strip().lower() if difficulty_raw is not None else "")
+    difficulty_tag_name: Optional[str] = None
+    if difficulty_key:
+        if difficulty_key not in DIFFICULTY_FILTER_MAP:
+            raise HTTPException(
+                status_code=400,
+                detail="difficulty 必须是 simple/normal/hard",
+            )
+        difficulty_tag_name = DIFFICULTY_FILTER_MAP[difficulty_key]
 
     resolved_ids: set[int] = set()
     created_count = 0
@@ -776,6 +905,42 @@ async def audit_submit_question(
             resolved_ids.add(int(tid))
         except Exception:
             continue
+
+    # 收集所有 tag_type='difficulty' 的 tag_id，用于后续 scoped upsert
+    all_difficulty_ids = {
+        int(t.id) for t in db.query(Tag).filter(Tag.tag_type == "difficulty").all()
+    }
+    difficulty_action = "unchanged"
+    if difficulty_tag_name is not None:
+        # 显式指定：剔除 resolved_ids 里其他难度标签，确保最后只保留一条 difficulty rel
+        resolved_ids -= all_difficulty_ids
+        target = (
+            db.query(Tag)
+            .filter(Tag.tag_type == "difficulty", Tag.tag_name == difficulty_tag_name)
+            .first()
+        )
+        if not target:
+            raise HTTPException(
+                status_code=500,
+                detail=f"难度标签 '{difficulty_tag_name}' 未在 tags 表中预置",
+            )
+        resolved_ids.add(int(target.id))
+        difficulty_action = f"set:{difficulty_tag_name}"
+    else:
+        # 未指定：先剔除 tag_ids 里误传的难度标签（保证最后只有 1 条），再保留现有 difficulty rel（含 AI 建议）
+        resolved_ids -= all_difficulty_ids
+        existing_diff_rows = db.execute(
+            select(question_tag_rel.c.tag_id).where(
+                (question_tag_rel.c.question_type == q_type)
+                & (question_tag_rel.c.question_id == question_id)
+                & (question_tag_rel.c.tag_id.in_(all_difficulty_ids))
+            )
+        ).all()
+        # 若存在多条（异常态，例如并发竞争），仅保留首条，避免一题多难度
+        existing_diff_ids = [int(r[0]) for r in existing_diff_rows][:1]
+        if existing_diff_ids:
+            resolved_ids.update(existing_diff_ids)
+            difficulty_action = f"promoted:{len(existing_diff_ids)}"
 
     # 按来源分别处理：AI 推荐的 tag_type='ai'，人工添加的 tag_type='human'
     typed_names: list[tuple[str, str]] = []
@@ -866,7 +1031,7 @@ async def audit_submit_question(
     ))
     db.commit()
     logger.info(
-        "[audit_submit] q_type=%s q_id=%s input_ids=%s input_names=%s resolved=%s created=%s existing_hit=%s changed_fields=%s review_status=%s cost_ms=%s",
+        "[audit_submit] q_type=%s q_id=%s input_ids=%s input_names=%s resolved=%s created=%s existing_hit=%s difficulty=%s changed_fields=%s review_status=%s cost_ms=%s",
         q_type,
         question_id,
         len(tag_ids),
@@ -874,6 +1039,7 @@ async def audit_submit_question(
         len(resolved_ids),
         created_count,
         existing_hit_count,
+        difficulty_action,
         ",".join(changed_fields),
         int(getattr(obj, "review_status", 0) or 0),
         int((time.time() - t0) * 1000),
@@ -899,11 +1065,11 @@ async def ai_tag_suggest_for_question(
     question_id: int,
     body: dict = None,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     t0 = time.time()
     q_type = _normalize_question_type(question_type)
-    model = QUESTION_MODEL_MAP[q_type]
-    obj = db.query(model).filter(model.id == question_id).first()
+    obj = get_visible_question(db, scope, q_type, question_id)
     if not obj:
         raise HTTPException(status_code=404, detail="题目不存在")
     logger.info("[ai_tag_suggest:start] q_type=%s q_id=%s", q_type, question_id)
@@ -1008,6 +1174,7 @@ async def ai_tag_suggest_for_question(
 async def batch_ai_tag_suggest(
     body: dict,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     q_type = _normalize_question_type(body.get("question_type"))
     limit = max(1, min(int(body.get("limit", 50) or 50), 200))
@@ -1016,6 +1183,7 @@ async def batch_ai_tag_suggest(
     model = QUESTION_MODEL_MAP[q_type]
 
     query = db.query(model)
+    query = apply_question_scope(query, scope, q_type, model)
     if only_manual:
         query = query.filter(model.document_id.is_(None))
     rows = query.order_by(model.id.desc()).limit(limit).all()
@@ -1030,6 +1198,7 @@ async def batch_ai_tag_suggest(
                 question_id=int(row.id),
                 body={"auto_apply": auto_apply},
                 db=db,
+                scope=scope,
             )
             ok += 1
             details.append({"question_id": int(row.id), "suggested": len(res.get("suggested_tags", []))})

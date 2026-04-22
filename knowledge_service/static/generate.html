@@ -78,6 +78,56 @@
                     </div>
                 </div>
 
+                <!-- 难度策略（可选，应用到所有启用的题型） -->
+                <div class="border-t pt-4 mb-6">
+                    <h3 class="text-sm font-semibold text-gray-800 mb-2">难度策略 <span class="text-gray-400 font-normal text-xs">（可选，应用到所有启用的题型）</span></h3>
+                    <div class="flex flex-wrap gap-x-5 gap-y-2 mb-3">
+                        <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                            <input type="radio" name="diffMode" value="none" checked onchange="onDiffModeChange()"> 不指定
+                        </label>
+                        <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                            <input type="radio" name="diffMode" value="single" onchange="onDiffModeChange()"> 单档模式
+                        </label>
+                        <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                            <input type="radio" name="diffMode" value="ratio" onchange="onDiffModeChange()"> 均衡配比
+                        </label>
+                        <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                            <input type="radio" name="diffMode" value="exam_sprint" onchange="onDiffModeChange()"> 考试冲刺 <span class="text-gray-400 text-xs">0/70/30</span>
+                        </label>
+                        <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                            <input type="radio" name="diffMode" value="beginner_friendly" onchange="onDiffModeChange()"> 入门友好 <span class="text-gray-400 text-xs">60/40/0</span>
+                        </label>
+                    </div>
+                    <!-- 单档模式的难度级别选择 -->
+                    <div id="diffSingleBox" class="hidden mb-2">
+                        <label class="block text-xs text-gray-500 mb-1">选择难度</label>
+                        <div class="flex gap-4">
+                            <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="radio" name="diffLevel" value="简单"> 简单</label>
+                            <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="radio" name="diffLevel" value="一般" checked> 一般</label>
+                            <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="radio" name="diffLevel" value="困难"> 困难</label>
+                        </div>
+                    </div>
+                    <!-- 均衡配比的比例输入 -->
+                    <div id="diffRatioBox" class="hidden mb-2">
+                        <label class="block text-xs text-gray-500 mb-1">自定义比例（和必须为 100）</label>
+                        <div class="grid grid-cols-3 gap-2 max-w-md">
+                            <div>
+                                <span class="text-xs text-gray-400">简单 %</span>
+                                <input type="number" id="diffRatioSimple" value="30" min="0" max="100" oninput="renderDiffHint()" class="w-full px-2 py-1 border border-gray-300 rounded">
+                            </div>
+                            <div>
+                                <span class="text-xs text-gray-400">一般 %</span>
+                                <input type="number" id="diffRatioNormal" value="50" min="0" max="100" oninput="renderDiffHint()" class="w-full px-2 py-1 border border-gray-300 rounded">
+                            </div>
+                            <div>
+                                <span class="text-xs text-gray-400">困难 %</span>
+                                <input type="number" id="diffRatioHard" value="20" min="0" max="100" oninput="renderDiffHint()" class="w-full px-2 py-1 border border-gray-300 rounded">
+                            </div>
+                        </div>
+                    </div>
+                    <p id="diffStrategyHint" class="text-xs text-gray-500 mt-1"></p>
+                </div>
+
                 <button id="generateBtn" onclick="startGenerate()" class="w-full px-4 py-3 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
                     开始出题
                 </button>
@@ -131,6 +181,25 @@ const API_BASE = '/api/v1';
 let currentTaskId = null;
 let pollTimer = null;
 
+function getScopeContext() {
+    const params = new URLSearchParams(window.location.search);
+    const role = params.get('scope_role') || localStorage.getItem('demo_scope_role') || 'global_admin';
+    const companyId = params.get('scope_company_id') || localStorage.getItem('demo_scope_company_id') || 'GLOBAL';
+    return { role, companyId };
+}
+
+function withScope(url) {
+    const scopedUrl = new URL(url, window.location.origin);
+    const scope = getScopeContext();
+    scopedUrl.searchParams.set('scope_role', scope.role);
+    scopedUrl.searchParams.set('scope_company_id', scope.companyId);
+    return `${scopedUrl.pathname}${scopedUrl.search}`;
+}
+
+function scopedFetch(url, options) {
+    return fetch(withScope(url), options);
+}
+
 function updateTypeToggles() {
     const toggles = [
         { cb: 'enableSingle', inputs: ['singleCount'] },
@@ -155,7 +224,7 @@ function updateTypeToggles() {
 
 async function loadDocuments() {
     try {
-        const res = await fetch(`${API_BASE}/documents?limit=200&status=completed`);
+        const res = await scopedFetch(`${API_BASE}/documents?limit=200&status=completed`);
         const data = await res.json();
         const select = document.getElementById('documentSelect');
         select.innerHTML = '<option value="">-- 请选择已解析完成的文档 --</option>';
@@ -188,7 +257,7 @@ async function onDocumentChange() {
 
     const docId = selected[0].value;
     try {
-        const res = await fetch(`${API_BASE}/knowledge-points/by-document/${docId}`);
+        const res = await scopedFetch(`${API_BASE}/knowledge-points/by-document/${docId}`);
         if (res.ok) {
             const data = await res.json();
             const count = data.total || (data.items ? data.items.length : 0);
@@ -201,6 +270,73 @@ async function onDocumentChange() {
     }
 }
 
+function onDiffModeChange() {
+    const mode = (document.querySelector('input[name="diffMode"]:checked') || {}).value || 'none';
+    document.getElementById('diffSingleBox').classList.toggle('hidden', mode !== 'single');
+    document.getElementById('diffRatioBox').classList.toggle('hidden', mode !== 'ratio');
+    renderDiffHint();
+}
+
+function renderDiffHint() {
+    const hint = document.getElementById('diffStrategyHint');
+    const mode = (document.querySelector('input[name="diffMode"]:checked') || {}).value || 'none';
+    if (mode === 'none') {
+        hint.textContent = '不指定难度，由 LLM 自行把握。';
+        hint.className = 'text-xs text-gray-500 mt-1';
+        return;
+    }
+    if (mode === 'single') {
+        const level = (document.querySelector('input[name="diffLevel"]:checked') || {}).value || '一般';
+        hint.textContent = `所有启用题型将全部生成【${level}】难度。`;
+        hint.className = 'text-xs text-gray-500 mt-1';
+        return;
+    }
+    if (mode === 'ratio') {
+        const s = parseInt(document.getElementById('diffRatioSimple').value) || 0;
+        const n = parseInt(document.getElementById('diffRatioNormal').value) || 0;
+        const h = parseInt(document.getElementById('diffRatioHard').value) || 0;
+        const sum = s + n + h;
+        if (sum !== 100) {
+            hint.textContent = `当前比例 ${s}/${n}/${h}，总和 ${sum} ≠ 100，提交前请调整。`;
+            hint.className = 'text-xs text-red-600 mt-1';
+        } else {
+            hint.textContent = `启用题型按 ${s}/${n}/${h} 分配（简单/一般/困难），整数分配采用 Hamilton 最大余数法。`;
+            hint.className = 'text-xs text-gray-500 mt-1';
+        }
+        return;
+    }
+    if (mode === 'exam_sprint') {
+        hint.textContent = '启用题型按 0/70/30 分配（简单/一般/困难），适合考前冲刺。';
+        hint.className = 'text-xs text-gray-500 mt-1';
+        return;
+    }
+    if (mode === 'beginner_friendly') {
+        hint.textContent = '启用题型按 60/40/0 分配（简单/一般/困难），适合新员工入门。';
+        hint.className = 'text-xs text-gray-500 mt-1';
+        return;
+    }
+}
+
+function buildDifficultyStrategy() {
+    const mode = (document.querySelector('input[name="diffMode"]:checked') || {}).value || 'none';
+    if (mode === 'none') return { ok: true, strategy: null };
+    if (mode === 'single') {
+        const level = (document.querySelector('input[name="diffLevel"]:checked') || {}).value;
+        if (!level) return { ok: false, err: '请选择单档模式的难度级别' };
+        return { ok: true, strategy: { mode: 'single', level } };
+    }
+    if (mode === 'ratio') {
+        const s = parseInt(document.getElementById('diffRatioSimple').value) || 0;
+        const n = parseInt(document.getElementById('diffRatioNormal').value) || 0;
+        const h = parseInt(document.getElementById('diffRatioHard').value) || 0;
+        if (s + n + h !== 100) return { ok: false, err: `均衡配比三项之和必须为 100，当前为 ${s + n + h}` };
+        return { ok: true, strategy: { mode: 'ratio', ratio: { '简单': s, '一般': n, '困难': h } } };
+    }
+    if (mode === 'exam_sprint') return { ok: true, strategy: { mode: 'exam_sprint' } };
+    if (mode === 'beginner_friendly') return { ok: true, strategy: { mode: 'beginner_friendly' } };
+    return { ok: false, err: '未知难度策略模式: ' + mode };
+}
+
 async function startGenerate() {
     const select = document.getElementById('documentSelect');
     const selected = Array.from(select.selectedOptions).filter(opt => opt.value);
@@ -211,20 +347,31 @@ async function startGenerate() {
 
     const docIds = selected.map(opt => parseInt(opt.value));
 
+    const diffRes = buildDifficultyStrategy();
+    if (!diffRes.ok) {
+        alert(diffRes.err);
+        return;
+    }
+    const strategy = diffRes.strategy;
+
     // 仅传启用的题型，未勾选的题型不传（后端默认 None = 跳过）
     const baseConfig = {};
     if (document.getElementById('enableSingle').checked) {
         baseConfig.single_choice_count = parseInt(document.getElementById('singleCount').value) || 0;
+        if (strategy) baseConfig.single_choice_difficulty_strategy = strategy;
     }
     if (document.getElementById('enableMultiple').checked) {
         baseConfig.multiple_choice_count = parseInt(document.getElementById('multipleCount').value) || 0;
         baseConfig.multiple_choice_options = parseInt(document.getElementById('multipleOptions').value) || 4;
+        if (strategy) baseConfig.multiple_choice_difficulty_strategy = strategy;
     }
     if (document.getElementById('enableJudge').checked) {
         baseConfig.judge_count = parseInt(document.getElementById('judgeCount').value) || 0;
+        if (strategy) baseConfig.judge_difficulty_strategy = strategy;
     }
     if (document.getElementById('enableEssay').checked) {
         baseConfig.essay_count = parseInt(document.getElementById('essayCount').value) || 0;
+        if (strategy) baseConfig.essay_difficulty_strategy = strategy;
     }
 
     const btn = document.getElementById('generateBtn');
@@ -240,7 +387,7 @@ async function startGenerate() {
             ...baseConfig,
         };
         try {
-            const res = await fetch(`${API_BASE}/questions/generate`, {
+            const res = await scopedFetch(`${API_BASE}/questions/generate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
@@ -321,7 +468,7 @@ function startPolling(taskId, docId) {
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(async () => {
         try {
-            const res = await fetch(`${API_BASE}/questions/tasks/${taskId}`);
+            const res = await scopedFetch(`${API_BASE}/questions/tasks/${taskId}`);
             const task = await res.json();
 
             let summaryText = '';
@@ -361,7 +508,7 @@ async function loadQuestions(docId, taskId) {
         const url = taskId
             ? `${API_BASE}/questions/by-task/${taskId}`
             : `${API_BASE}/questions/by-document/${docId}`;
-        const res = await fetch(url);
+        const res = await scopedFetch(url);
         const data = await res.json();
 
         document.getElementById('resultSection').classList.remove('hidden');
@@ -497,7 +644,7 @@ function switchTab(tab) {
 async function loadTaskHistory() {
     const el = document.getElementById('taskHistory');
     try {
-        const res = await fetch(`${API_BASE}/questions/tasks?limit=20`);
+        const res = await scopedFetch(`${API_BASE}/questions/tasks?limit=20`);
         const data = await res.json();
         const items = data.items || [];
         if (items.length === 0) {
@@ -569,10 +716,16 @@ function esc(s) {
     return div.innerHTML;
 }
 
+// 难度级别单选变化时刷新提示
+document.querySelectorAll('input[name="diffLevel"]').forEach(el => {
+    el.addEventListener('change', renderDiffHint);
+});
+
 // 页面加载
 loadDocuments();
 loadTaskHistory();
 updateTypeToggles();
+renderDiffHint();
 </script>
 </body>
 </html>

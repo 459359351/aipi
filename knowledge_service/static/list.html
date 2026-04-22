@@ -80,6 +80,25 @@
     <script>
         let allDocuments = [];
 
+        function getScopeContext() {
+            const params = new URLSearchParams(window.location.search);
+            const role = params.get('scope_role') || localStorage.getItem('demo_scope_role') || 'global_admin';
+            const companyId = params.get('scope_company_id') || localStorage.getItem('demo_scope_company_id') || 'GLOBAL';
+            return { role, companyId };
+        }
+
+        function withScope(url) {
+            const scopedUrl = new URL(url, window.location.origin);
+            const scope = getScopeContext();
+            scopedUrl.searchParams.set('scope_role', scope.role);
+            scopedUrl.searchParams.set('scope_company_id', scope.companyId);
+            return `${scopedUrl.pathname}${scopedUrl.search}`;
+        }
+
+        function scopedFetch(url, options) {
+            return fetch(withScope(url), options);
+        }
+
         async function loadDocuments() {
             const loading = document.getElementById('loading');
             const documentList = document.getElementById('documentList');
@@ -104,7 +123,7 @@
         }
 
         async function fetchAllDocuments() {
-            const response = await fetch('/api/v1/documents?limit=200');
+            const response = await scopedFetch('/api/v1/documents?limit=200');
             if (!response.ok) throw new Error(`获取文档列表失败 (${response.status})`);
             const data = await response.json();
             return data.items;
@@ -224,7 +243,7 @@
             if (!confirm(`确定要删除文档「${name}」吗？\n此操作将同时删除关联的知识点和 Dify 数据，不可恢复！`)) return;
 
             try {
-                const response = await fetch(`/api/v1/documents/${id}`, { method: 'DELETE' });
+                const response = await scopedFetch(`/api/v1/documents/${id}`, { method: 'DELETE' });
                 if (response.ok) {
                     alert('✅ 文档已删除');
                     loadDocuments();
@@ -238,7 +257,8 @@
         }
 
         function viewDocument(id) {
-            window.location.href = `/static/detail.html?id=${id}`;
+            const scope = getScopeContext();
+            window.location.href = `/static/detail.html?id=${id}&scope_role=${encodeURIComponent(scope.role)}&scope_company_id=${encodeURIComponent(scope.companyId)}`;
         }
 
         // 页面加载时自动获取文档列表

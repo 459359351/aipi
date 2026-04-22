@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 
 from ..database import get_db
+from ..security.company_scope import CompanyScope, get_company_scope, validate_target_company_ids
 from ..schemas.document import (
     DocumentResponse,
     DocumentListResponse,
@@ -47,7 +48,9 @@ async def upload_document(
     effective_date: Optional[str] = Form(None, description="生效日期 (YYYY-MM-DD)"),
     security_level: Optional[str] = Form("internal", description="安全等级"),
     upload_user: Optional[str] = Form(None, description="上传用户"),
+    target_company_ids: str = Form(..., description="文档归属公司ID数组 JSON，如 [\"A\",\"B\"]"),
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     """
     上传文档并触发后台解析任务
@@ -80,6 +83,22 @@ async def upload_document(
         except ValueError:
             raise HTTPException(status_code=400, detail="effective_date 格式应为 YYYY-MM-DD")
 
+    parsed_target_company_ids = validate_target_company_ids(
+        scope,
+        target_company_ids,
+        required=True,
+    )
+
+    parsed_father_tag_ids: List[int] = []
+    parsed_tag_ids: List[int] = []
+    try:
+        if father_tag_ids:
+            parsed_father_tag_ids = json.loads(father_tag_ids)
+        if tag_ids:
+            parsed_tag_ids = json.loads(tag_ids)
+    except (json.JSONDecodeError, TypeError):
+        raise HTTPException(status_code=400, detail="father_tag_ids / tag_ids 应为 JSON 数组，如 [1,2]")
+
     # ── Step 1: 保存文档元数据 ────────────────────────────
     doc = document_service.create_document(
         db,
@@ -97,18 +116,9 @@ async def upload_document(
         upload_user=upload_user,
         upload_time=now,
     )
+    document_service.replace_document_company_scopes(db, doc.id, parsed_target_company_ids)
 
     # ── Step 1.5: 保存文档-标签多对多关联 ─────────────────
-    parsed_father_tag_ids: List[int] = []
-    parsed_tag_ids: List[int] = []
-    try:
-        if father_tag_ids:
-            parsed_father_tag_ids = json.loads(father_tag_ids)
-        if tag_ids:
-            parsed_tag_ids = json.loads(tag_ids)
-    except (json.JSONDecodeError, TypeError):
-        raise HTTPException(status_code=400, detail="father_tag_ids / tag_ids 应为 JSON 数组，如 [1,2]")
-
     if parsed_father_tag_ids or parsed_tag_ids:
         document_service.save_document_tags(
             db, doc.id, parsed_father_tag_ids, parsed_tag_ids
@@ -152,29 +162,42 @@ async def list_documents(
     limit: int = Query(50, ge=1, le=200, description="每页条数"),
     status: Optional[str] = Query(None, description="按状态筛选"),
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     """分页获取文档列表，支持按状态筛选"""
-    docs, total = document_service.get_documents_list(db, skip=skip, limit=limit, status=status)
+    docs, total = document_service.get_documents_list(
+        db,
+        skip=skip,
+        limit=limit,
+        status=status,
+        scope=scope,
+    )
     items = []
     for doc in docs:
         resp = DocumentResponse.model_validate(doc)
         tags = document_service.get_document_tags(db, doc.id)
         resp.father_tags = tags["father_tags"]
         resp.sub_tags = tags["sub_tags"]
+        resp.company_ids = document_service.get_document_company_ids(db, doc.id)
         items.append(resp)
     return DocumentListResponse(total=total, items=items)
 
 
 @router.get("/{document_id}", response_model=DocumentResponse, summary="查询文档详情")
-async def get_document(document_id: int, db: Session = Depends(get_db)):
+async def get_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
+):
     """根据 ID 查询文档状态与详情"""
-    doc = document_service.get_document_by_id(db, document_id)
+    doc = document_service.get_document_by_id(db, document_id, scope=scope)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
     resp = DocumentResponse.model_validate(doc)
     tags = document_service.get_document_tags(db, document_id)
     resp.father_tags = tags["father_tags"]
     resp.sub_tags = tags["sub_tags"]
+    resp.company_ids = document_service.get_document_company_ids(db, document_id)
     return resp
 
 
@@ -183,11 +206,12 @@ async def reparse_document(
     document_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     """
     重新解析文档：先清理旧知识点（MySQL + Dify），再触发新的解析任务
     """
-    doc = document_service.get_document_by_id(db, document_id)
+    doc = document_service.get_document_by_id(db, document_id, scope=scope)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
@@ -239,18 +263,37 @@ async def update_document(
     document_id: int,
     body: DocumentUpdateRequest,
     db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
 ):
     """更新文档的描述性元数据（不涉及文件替换）"""
-    doc = document_service.get_document_by_id(db, document_id)
+    doc = document_service.get_document_by_id(db, document_id, scope=scope)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
     fields = body.model_dump(exclude_unset=True)
-    if not fields:
+    target_company_ids = fields.pop("target_company_ids", None)
+    if not fields and target_company_ids is None:
         raise HTTPException(status_code=400, detail="未提供任何需要更新的字段")
 
-    updated = document_service.update_document_metadata(db, document_id, **fields)
-    return updated
+    if fields:
+        document_service.update_document_metadata(db, document_id, **fields)
+    if target_company_ids is not None:
+        validated_company_ids = validate_target_company_ids(
+            scope,
+            target_company_ids,
+            required=True,
+        )
+        document_service.replace_document_company_scopes(db, document_id, validated_company_ids)
+
+    updated = document_service.get_document_by_id(db, document_id, scope=scope)
+    if not updated:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    response = DocumentResponse.model_validate(updated)
+    tags = document_service.get_document_tags(db, document_id)
+    response.father_tags = tags["father_tags"]
+    response.sub_tags = tags["sub_tags"]
+    response.company_ids = document_service.get_document_company_ids(db, document_id)
+    return response
 
 
 def _extract_object_key(file_url: str) -> str:
@@ -260,11 +303,15 @@ def _extract_object_key(file_url: str) -> str:
 
 
 @router.delete("/{document_id}", summary="删除文档")
-async def delete_document(document_id: int, db: Session = Depends(get_db)):
+async def delete_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
+):
     """
     级联删除文档：Dify 知识点 → MinIO 文件 → MySQL 记录
     """
-    doc = document_service.get_document_by_id(db, document_id)
+    doc = document_service.get_document_by_id(db, document_id, scope=scope)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
@@ -307,12 +354,16 @@ async def delete_document(document_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{document_id}/render-html", summary="文档 HTML 预览")
-async def render_document_html(document_id: int, db: Session = Depends(get_db)):
+async def render_document_html(
+    document_id: int,
+    db: Session = Depends(get_db),
+    scope: CompanyScope = Depends(get_company_scope),
+):
     """
     从 MinIO 下载文档原文，转换为 HTML 返回，供审核页面 iframe 内嵌预览。
     支持 docx / txt，PDF 暂不支持在线预览。
     """
-    doc = document_service.get_document_by_id(db, document_id)
+    doc = document_service.get_document_by_id(db, document_id, scope=scope)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
     if not doc.file_url:

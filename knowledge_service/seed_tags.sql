@@ -62,9 +62,9 @@ ON DUPLICATE KEY UPDATE
 
 -- difficulty: 难度（可选）
 INSERT INTO tags (tag_name, tag_type, is_enabled) VALUES
-('基础', 'difficulty', 1),
-('进阶', 'difficulty', 1),
-('综合', 'difficulty', 1)
+('简单', 'difficulty', 1),
+('一般', 'difficulty', 1),
+('困难', 'difficulty', 1)
 ON DUPLICATE KEY UPDATE
   tag_type = VALUES(tag_type),
   is_enabled = GREATEST(is_enabled, VALUES(is_enabled));

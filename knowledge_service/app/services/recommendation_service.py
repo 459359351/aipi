@@ -20,6 +20,7 @@ from ..models.question_tag_rel import question_tag_rel
 from ..models.knowledge_tag_rel import knowledge_tag_rel
 from ..models.user_profile import UserProfile
 from ..models.user_question_behavior import UserQuestionBehavior
+from ..security.company_scope import CompanyScope, apply_question_scope
 from ..services import document_service
 from ..services.knowledge_extractor import extract_knowledge_points_from_qa
 from ..services.tag_matcher import get_tag_matcher, match_tags_by_nlp
@@ -197,6 +198,7 @@ def _query_manual_related_questions_by_tags(
     question_type: str,
     tag_ids: List[int],
     limit: int,
+    scope: CompanyScope,
     exclude_ids: Optional[List[int]] = None,
     confirmed_only: bool = True,
 ):
@@ -217,6 +219,7 @@ def _query_manual_related_questions_by_tags(
         .filter(question_tag_rel.c.tag_id.in_(tag_ids))
         .filter(question_tag_rel.c.is_confirmed == (1 if confirmed_only else 0))
     )
+    query = apply_question_scope(query, scope, question_type, model)
     if exclude_ids:
         query = query.filter(~model.id.in_(exclude_ids))
     return (
@@ -232,15 +235,15 @@ def _query_document_questions(
     question_type: str,
     document_id: int,
     limit: int,
+    scope: CompanyScope,
 ) -> List:
     model = QUESTION_MODEL_MAP[question_type]
-    return (
+    query = (
         db.query(model)
         .filter(model.document_id == document_id)
-        .order_by(func.rand())
-        .limit(limit)
-        .all()
     )
+    query = apply_question_scope(query, scope, question_type, model)
+    return query.order_by(func.rand()).limit(limit).all()
 
 
 def _query_manual_related_questions(
@@ -249,6 +252,7 @@ def _query_manual_related_questions(
     knowledge_ids: List[int],
     limit: int,
     exclude_ids: List[int],
+    scope: CompanyScope,
 ) -> List:
     if not knowledge_ids or limit <= 0:
         return []
@@ -267,6 +271,7 @@ def _query_manual_related_questions(
             model.document_id.is_(None),
         )
     )
+    query = apply_question_scope(query, scope, question_type, model)
     if exclude_ids:
         query = query.filter(~model.id.in_(exclude_ids))
     return (
@@ -289,8 +294,11 @@ def recommend_by_document(
     essay_count: int = 2,
     include_manual: bool = True,
     user_id: Optional[str] = None,
+    scope: CompanyScope | None = None,
 ) -> Dict:
-    doc = db.query(Document).filter(Document.id == document_id).first()
+    if scope is None:
+        raise ValueError("缺少 scope 上下文")
+    doc = document_service.get_document_by_id(db, document_id, scope=scope)
     if not doc:
         raise ValueError("文档不存在")
 
@@ -320,6 +328,7 @@ def recommend_by_document(
             question_type=q_type,
             document_id=document_id,
             limit=needed,
+            scope=scope,
         )
         selected_ids = [q.id for q in selected]
 
@@ -329,6 +338,7 @@ def recommend_by_document(
                 question_type=q_type,
                 tag_ids=tag_ids,
                 limit=needed - len(selected),
+                scope=scope,
                 exclude_ids=selected_ids,
                 confirmed_only=True,
             )
@@ -340,6 +350,7 @@ def recommend_by_document(
                     question_type=q_type,
                     tag_ids=tag_ids,
                     limit=(needed - len(selected)) - len(supplement),
+                    scope=scope,
                     exclude_ids=selected_ids + [q.id for q in supplement],
                     confirmed_only=False,
                 )
@@ -352,6 +363,7 @@ def recommend_by_document(
                     knowledge_ids=knowledge_ids,
                     limit=(needed - len(selected)) - len(supplement),
                     exclude_ids=selected_ids + [q.id for q in supplement],
+                    scope=scope,
                 )
                 supplement.extend(fallback)
             selected.extend(supplement)
@@ -375,9 +387,17 @@ def recommend_by_document(
     }
 
 
-def _get_question_obj(db: Session, question_type: str, question_id: int):
+def _get_question_obj(
+    db: Session,
+    question_type: str,
+    question_id: int,
+    scope: CompanyScope | None = None,
+):
     model = QUESTION_MODEL_MAP[question_type]
-    return db.query(model).filter(model.id == question_id).first()
+    query = db.query(model).filter(model.id == question_id)
+    if scope is not None:
+        query = apply_question_scope(query, scope, question_type, model)
+    return query.first()
 
 
 def _cascade_find_candidates(
@@ -388,6 +408,7 @@ def _cascade_find_candidates(
     question_text: Optional[str],
     limit: int,
     exclude: Set[Tuple[str, int]],
+    scope: CompanyScope,
     enable_text_match: bool = True,
 ) -> List[Tuple[str, int, object, str]]:
     """
@@ -425,7 +446,7 @@ def _cascade_find_candidates(
                 key = (c_type, c_id)
                 if key in used:
                     continue
-                obj = _get_question_obj(db, c_type, c_id)
+                obj = _get_question_obj(db, c_type, c_id, scope=scope)
                 if not obj:
                     continue
                 used.add(key)
@@ -454,7 +475,7 @@ def _cascade_find_candidates(
             key = (c_type, c_id)
             if key in used:
                 continue
-            obj = _get_question_obj(db, c_type, c_id)
+            obj = _get_question_obj(db, c_type, c_id, scope=scope)
             if not obj:
                 continue
             used.add(key)
@@ -470,6 +491,7 @@ def _cascade_find_candidates(
             source_question_text=question_text,
             limit=limit - len(results),
             exclude_ids=used,
+            scope=scope,
         )
         for c_type, c_id, obj in text_matches:
             key = (c_type, c_id)
@@ -484,7 +506,12 @@ def _cascade_find_candidates(
     if len(results) < limit and document_id:
         for c_type, model in QUESTION_MODEL_MAP.items():
             fallback_rows = (
-                db.query(model)
+                apply_question_scope(
+                    db.query(model),
+                    scope,
+                    c_type,
+                    model,
+                )
                 .filter(model.document_id == document_id)
                 .order_by(func.rand())
                 .limit(limit)
@@ -510,12 +537,15 @@ def recommend_by_question(
     question_id: int,
     limit: int = 10,
     user_id: Optional[str] = None,
+    scope: CompanyScope | None = None,
     enable_text_match: bool = True,
 ) -> Dict:
     normalized_type = _normalize_question_type(question_type)
     limit = max(1, min(int(limit), 50))
+    if scope is None:
+        raise ValueError("缺少 scope 上下文")
 
-    base_obj = _get_question_obj(db, normalized_type, question_id)
+    base_obj = _get_question_obj(db, normalized_type, question_id, scope=scope)
     if not base_obj:
         raise ValueError("错题不存在")
 
@@ -547,6 +577,7 @@ def recommend_by_question(
         question_text=getattr(base_obj, "question_text", None),
         limit=limit,
         exclude={(normalized_type, question_id)},
+        scope=scope,
         enable_text_match=enable_text_match,
     )
 
@@ -578,7 +609,10 @@ def recommend_by_profile(
     multiple_count: int = 5,
     judge_count: int = 5,
     essay_count: int = 2,
+    scope: CompanyScope | None = None,
 ) -> Dict:
+    if scope is None:
+        raise ValueError("缺少 scope 上下文")
     profile = db.query(UserProfile).filter(UserProfile.user_id == str(user_id)).first()
     if not profile:
         raise ValueError("用户画像不存在")
@@ -634,6 +668,7 @@ def recommend_by_profile(
             .order_by(desc(func.count(func.distinct(question_tag_rel.c.tag_id))), func.rand())
             .limit(need * 3)
         )
+        query = apply_question_scope(query, scope, q_type, model)
         cands = query.all()
         scored = []
         for q in cands:
@@ -676,8 +711,11 @@ def recommend_by_tags(
     user_id: Optional[str] = None,
     position: Optional[str] = None,
     level: Optional[str] = None,
+    scope: CompanyScope | None = None,
 ) -> Dict:
     """按标签 ID 直接推荐题目（供 Tab C 的获取一道题使用）"""
+    if scope is None:
+        raise ValueError("缺少 scope 上下文")
     if not tag_ids:
         raise ValueError("tag_ids 不能为空")
 
@@ -716,6 +754,7 @@ def recommend_by_tags(
             )
             .limit(need * 3)
         )
+        query = apply_question_scope(query, scope, q_type, model)
         cands = query.all()
 
         if user_id:
@@ -746,6 +785,7 @@ def get_random_wrong_question(
     user_id: int,
     bank_ids: List[int],
     essay_score_threshold: int = 0,
+    scope: CompanyScope | None = None,
 ) -> Optional[Dict]:
     """
     从用户的错题中随机选一道作为种子，通过推荐管道找到相似题，
@@ -755,6 +795,9 @@ def get_random_wrong_question(
     import random
     from ..models.choice_answer import ChoiceAnswer, CHOICE_TYPE_MAP
     from ..models.answer import Answer
+
+    if scope is None:
+        raise ValueError("缺少 scope 上下文")
 
     wrong_questions: List[Tuple[str, int]] = []
 
@@ -770,7 +813,7 @@ def get_random_wrong_question(
     )
     for row in choice_rows:
         q_type_str = CHOICE_TYPE_MAP.get(int(row.question_type))
-        if q_type_str:
+        if q_type_str and _get_question_obj(db, q_type_str, int(row.question_id), scope=scope):
             wrong_questions.append((q_type_str, int(row.question_id)))
 
     # 简答题错题
@@ -785,7 +828,8 @@ def get_random_wrong_question(
         .all()
     )
     for row in essay_rows:
-        wrong_questions.append(("essay", int(row.question_id)))
+        if _get_question_obj(db, "essay", int(row.question_id), scope=scope):
+            wrong_questions.append(("essay", int(row.question_id)))
 
     if not wrong_questions:
         return None
@@ -794,7 +838,7 @@ def get_random_wrong_question(
     unique_wrong = list(set(wrong_questions))
     seed_type, seed_id = random.choice(unique_wrong)
 
-    seed_obj = _get_question_obj(db, seed_type, seed_id)
+    seed_obj = _get_question_obj(db, seed_type, seed_id, scope=scope)
     if not seed_obj:
         return None
 
@@ -807,6 +851,7 @@ def get_random_wrong_question(
             question_type=seed_type,
             question_id=seed_id,
             limit=5,
+            scope=scope,
             enable_text_match=True,
         )
         related = rec_result.get("related_questions", [])
@@ -833,6 +878,7 @@ def recommend_question_set(
     wrong_user_id: Optional[int] = None,
     bank_ids: Optional[str] = None,
     essay_score_threshold: int = 0,
+    scope: CompanyScope | None = None,
 ) -> Dict:
     """
     组卷：获取一套跨题型知识点不重复的套题。
@@ -846,6 +892,8 @@ def recommend_question_set(
         get_configured_counts,
         SupplementContext,
     )
+    if scope is None:
+        raise ValueError("缺少 scope 上下文")
 
     # 使用 .env 配置的目标数量来决定候选收集量
     configured_counts = get_configured_counts()
@@ -860,7 +908,7 @@ def recommend_question_set(
     if mode == "document":
         if not document_id:
             raise ValueError("mode=document 时 document_id 必填")
-        doc = db.query(Document).filter(Document.id == document_id).first()
+        doc = document_service.get_document_by_id(db, document_id, scope=scope)
         if not doc:
             raise ValueError("文档不存在")
 
@@ -870,6 +918,7 @@ def recommend_question_set(
             tag_ids=tag_ids_from_doc,
             knowledge_ids=knowledge_ids,
             document_id=document_id,
+            scope=scope,
         )
 
         for q_type in ("single", "multiple", "judge", "essay"):
@@ -877,11 +926,22 @@ def recommend_question_set(
             fetch_limit = max(target * 3, 30)
             model = QUESTION_MODEL_MAP[q_type]
             # 文档内题目
-            doc_qs = db.query(model).filter(model.document_id == document_id).order_by(func.rand()).limit(fetch_limit).all()
+            doc_qs = (
+                apply_question_scope(
+                    db.query(model),
+                    scope,
+                    q_type,
+                    model,
+                )
+                .filter(model.document_id == document_id)
+                .order_by(func.rand())
+                .limit(fetch_limit)
+                .all()
+            )
             # 补充同标签人工题
             doc_ids = [q.id for q in doc_qs]
             supplement = _query_manual_related_questions_by_tags(
-                db, q_type, tag_ids_from_doc, limit=fetch_limit, exclude_ids=doc_ids, confirmed_only=False,
+                db, q_type, tag_ids_from_doc, limit=fetch_limit, scope=scope, exclude_ids=doc_ids, confirmed_only=False,
             )
             all_qs = doc_qs + list(supplement)
             candidates_by_type[q_type] = build_candidate_pool(db, q_type, all_qs, user_id)
@@ -907,7 +967,7 @@ def recommend_question_set(
         if not resolved_tag_ids:
             raise ValueError("未匹配到任何标签，请检查兴趣标签输入")
 
-        supplement_ctx = SupplementContext(tag_ids=list(resolved_tag_ids))
+        supplement_ctx = SupplementContext(tag_ids=list(resolved_tag_ids), scope=scope)
 
         for q_type in ("single", "multiple", "judge", "essay"):
             target = configured_counts.get(q_type, 0)
@@ -923,8 +983,8 @@ def recommend_question_set(
                 .group_by(model.id)
                 .order_by(desc(func.count(func.distinct(question_tag_rel.c.tag_id))))
                 .limit(fetch_limit)
-                .all()
             )
+            qs = apply_question_scope(qs, scope, q_type, model).all()
             candidates_by_type[q_type] = build_candidate_pool(db, q_type, qs, user_id)
 
     elif mode == "tags":
@@ -935,7 +995,7 @@ def recommend_question_set(
         extra_tag_ids |= _resolve_tag_ids_by_terms(db, [position, level])
 
         all_tag_ids = list(extra_tag_ids)
-        supplement_ctx = SupplementContext(tag_ids=all_tag_ids)
+        supplement_ctx = SupplementContext(tag_ids=all_tag_ids, scope=scope)
 
         for q_type in ("single", "multiple", "judge", "essay"):
             target = configured_counts.get(q_type, 0)
@@ -951,8 +1011,8 @@ def recommend_question_set(
                 .group_by(model.id)
                 .order_by(desc(func.count(func.distinct(question_tag_rel.c.tag_id))))
                 .limit(fetch_limit)
-                .all()
             )
+            qs = apply_question_scope(qs, scope, q_type, model).all()
             candidates_by_type[q_type] = build_candidate_pool(db, q_type, qs, user_id)
 
     elif mode == "wrong_questions":
@@ -982,7 +1042,7 @@ def recommend_question_set(
         )
         for row in choice_rows:
             q_type_str = CHOICE_TYPE_MAP.get(int(row.question_type))
-            if q_type_str:
+            if q_type_str and _get_question_obj(db, q_type_str, int(row.question_id), scope=scope):
                 wrong_questions.append((q_type_str, int(row.question_id)))
 
         # 2) 查询简答题错题
@@ -995,7 +1055,8 @@ def recommend_question_set(
         essay_query = essay_query.filter(Answer.ai_final_score.isnot(None))
         essay_rows = essay_query.all()
         for row in essay_rows:
-            wrong_questions.append(("essay", int(row.question_id)))
+            if _get_question_obj(db, "essay", int(row.question_id), scope=scope):
+                wrong_questions.append(("essay", int(row.question_id)))
 
         if not wrong_questions:
             # R12: 无错题返回空结果
@@ -1015,6 +1076,9 @@ def recommend_question_set(
         all_document_ids: Set[int] = set()
 
         for q_type, q_id in wrong_questions:
+            obj = _get_question_obj(db, q_type, q_id, scope=scope)
+            if not obj:
+                continue
             tag_ids_for_q = _load_question_tag_ids(db, q_type, q_id)
             all_tag_ids.update(tag_ids_for_q)
 
@@ -1028,14 +1092,14 @@ def recommend_question_set(
             )
             all_knowledge_ids.update(int(r[0]) for r in kp_rows)
 
-            obj = _get_question_obj(db, q_type, q_id)
-            if obj and getattr(obj, "document_id", None):
+            if getattr(obj, "document_id", None):
                 all_document_ids.add(int(obj.document_id))
 
         supplement_ctx = SupplementContext(
             tag_ids=list(all_tag_ids),
             knowledge_ids=list(all_knowledge_ids),
             document_id=list(all_document_ids)[0] if all_document_ids else None,
+            scope=scope,
         )
 
         # 5) 调用共享降级管道（不传 question_text，多道错题题干无法聚合）
@@ -1047,6 +1111,7 @@ def recommend_question_set(
             question_text=None,
             limit=100,  # 拿足够多的候选给 assemble 去重
             exclude=exclude_set,
+            scope=scope,
             enable_text_match=False,
         )
 
@@ -1137,7 +1202,10 @@ def _match_knowledge_for_question(
     return result
 
 
-def build_manual_question_knowledge_rel(db: Session) -> Dict:
+def build_manual_question_knowledge_rel(
+    db: Session,
+    scope: CompanyScope,
+) -> Dict:
     """
     为人工作业题目（document_id 为空的题目）提炼知识点并建立关联（标签驱动版本）。
 
@@ -1192,7 +1260,16 @@ def build_manual_question_knowledge_rel(db: Session) -> Dict:
     candidate_tags_seen: set[str] = set()
 
     for q_type, model in QUESTION_MODEL_MAP.items():
-        manual_rows = db.query(model).filter(model.document_id.is_(None)).all()
+        manual_rows = (
+            apply_question_scope(
+                db.query(model),
+                scope,
+                q_type,
+                model,
+            )
+            .filter(model.document_id.is_(None))
+            .all()
+        )
         for row in manual_rows:
             processed += 1
 
@@ -1311,4 +1388,3 @@ def build_manual_question_knowledge_rel(db: Session) -> Dict:
         "manual_kp_document_id": manual_doc.id,
         "candidate_tags_count": len(candidate_tags_seen),
     }
-

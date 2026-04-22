@@ -17,6 +17,12 @@ class QuestionGenerateRequest(BaseModel):
     - 0（单选/多选/判断）：按知识点数量出题
     - 0（简答）：不生成
     - >0：按指定数量出题
+
+    difficulty_strategy 字段（每题型可独立指定）：
+    - None（不传）：不约束难度，由 LLM 自定
+    - dict：{"mode": "single|ratio|exam_sprint|beginner_friendly",
+            "level"?: "简单|一般|困难",  # single 模式必填
+            "ratio"?: {"简单": int, "一般": int, "困难": int}  # ratio 模式必填，和=100}
     """
     document_id: int = Field(..., description="文档 ID（必须是已解析完成的文档）")
     single_choice_count: Optional[int] = Field(None, ge=0, le=50, description="单选题数量，None=跳过，0=按知识点数")
@@ -24,6 +30,10 @@ class QuestionGenerateRequest(BaseModel):
     multiple_choice_options: int = Field(4, ge=4, le=5, description="多选题选项数(4或5)")
     judge_count: Optional[int] = Field(None, ge=0, le=50, description="判断题数量，None=跳过，0=按知识点数")
     essay_count: Optional[int] = Field(None, ge=0, le=20, description="简答题数量，None=跳过，0=不生成")
+    single_choice_difficulty_strategy: Optional[dict] = Field(None, description="单选题难度策略")
+    multiple_choice_difficulty_strategy: Optional[dict] = Field(None, description="多选题难度策略")
+    judge_difficulty_strategy: Optional[dict] = Field(None, description="判断题难度策略")
+    essay_difficulty_strategy: Optional[dict] = Field(None, description="简答题难度策略")
 
 
 # ── 响应模型 ──────────────────────────────────────────────

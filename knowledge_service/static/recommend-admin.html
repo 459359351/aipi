@@ -49,12 +49,19 @@
             <p class="text-sm text-gray-600 mb-4">
                 AI 自动继承到题目的标签默认是未确认状态，请在此确认。
             </p>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
                 <select id="qType" class="px-3 py-2 border border-gray-300 rounded-md">
                     <option value="single">单选题</option>
                     <option value="multiple">多选题</option>
                     <option value="judge">判断题</option>
                     <option value="essay">简答题</option>
+                </select>
+                <select id="qDifficulty" class="px-3 py-2 border border-gray-300 rounded-md" title="按难度筛选">
+                    <option value="all">全部难度</option>
+                    <option value="simple">简单</option>
+                    <option value="normal">一般</option>
+                    <option value="hard">困难</option>
+                    <option value="unlabeled">未标注</option>
                 </select>
                 <input id="qKeyword" type="text" placeholder="题干关键字（可选）"
                     class="px-3 py-2 border border-gray-300 rounded-md">
@@ -92,6 +99,11 @@
                 <div id="subTagList" class="min-h-[28px]">
                     <span class="text-gray-400 text-xs">请先选择一级标签</span>
                 </div>
+            </div>
+            <!-- Row 2b: 难度（三选一，复用 AI 推荐高亮） -->
+            <div class="mb-3" id="difficultySection">
+                <label class="block text-xs font-medium text-gray-500 mb-1.5">难度（点击选择，AI 建议会高亮）</label>
+                <div id="difficultyPillRow" class="flex gap-2 flex-wrap"></div>
             </div>
             <!-- suggestTagList kept as hidden anchor for legacy JS refs -->
             <div id="suggestTagList" class="hidden"></div>
@@ -177,6 +189,24 @@
 
     <script>
         const API_BASE = '/api/v1';
+        function getScopeContext() {
+            const params = new URLSearchParams(window.location.search);
+            const role = params.get('scope_role') || localStorage.getItem('demo_scope_role') || 'global_admin';
+            const companyId = params.get('scope_company_id') || localStorage.getItem('demo_scope_company_id') || 'GLOBAL';
+            return { role, companyId };
+        }
+
+        function withScope(url) {
+            const scopedUrl = new URL(url, window.location.origin);
+            const scope = getScopeContext();
+            scopedUrl.searchParams.set('scope_role', scope.role);
+            scopedUrl.searchParams.set('scope_company_id', scope.companyId);
+            return `${scopedUrl.pathname}${scopedUrl.search}`;
+        }
+
+        function scopedFetch(url, options) {
+            return fetch(withScope(url), options);
+        }
         const tagAuditMsg = document.getElementById('tagAuditMsg');
         const pendingListEl = document.getElementById('pendingList');
         const pendingPaginationEl = document.getElementById('pendingPagination');
@@ -242,7 +272,41 @@
                 saveManual: false,
             },
             subTagRequestId: 0,
+            // 难度字段：currentDifficulty 值域 simple/normal/hard/null；difficultyIsAiSuggested 标识是否来自 AI（is_confirmed=0）
+            currentDifficulty: null,
+            difficultyIsAiSuggested: false,
         };
+
+        const DIFFICULTY_LEVELS = [
+            { value: 'simple', label: '简单', tagName: '简单' },
+            { value: 'normal', label: '一般', tagName: '一般' },
+            { value: 'hard',   label: '困难', tagName: '困难' },
+        ];
+        const DIFFICULTY_TAGNAME_TO_VALUE = Object.fromEntries(
+            DIFFICULTY_LEVELS.map(d => [d.tagName, d.value])
+        );
+
+        function renderDifficultyRow() {
+            const el = document.getElementById('difficultyPillRow');
+            if (!el) return;
+            const current = state.currentDifficulty;
+            const isAi = !!state.difficultyIsAiSuggested;
+            el.innerHTML = DIFFICULTY_LEVELS.map(d => {
+                const selected = current === d.value;
+                let cls = 'px-3 py-1 rounded-md border text-sm cursor-pointer transition-colors';
+                if (selected && isAi) {
+                    cls += ' border-2 border-blue-500 bg-blue-100 text-blue-800';
+                } else if (selected) {
+                    cls += ' bg-blue-600 text-white border-blue-600';
+                } else {
+                    cls += ' border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100';
+                }
+                const aiBadge = selected && isAi
+                    ? ' <span class="text-[10px] px-1 py-0.5 rounded bg-blue-600 text-white ml-1">AI</span>'
+                    : '';
+                return `<button type="button" class="diff-pill ${cls}" data-value="${d.value}">${d.label}${aiBadge}</button>`;
+            }).join('');
+        }
 
         function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
@@ -294,8 +358,11 @@
         async function loadPendingQuestions() {
             const qType = document.getElementById('qType').value;
             const keyword = document.getElementById('qKeyword').value.trim();
-            const url = `${API_BASE}/questions/audit/pending?question_type=${encodeURIComponent(qType)}&limit=200` + (keyword ? `&keyword=${encodeURIComponent(keyword)}` : '');
-            const r = await fetch(url);
+            const difficulty = (document.getElementById('qDifficulty')?.value || 'all').trim();
+            let url = `${API_BASE}/questions/audit/pending?question_type=${encodeURIComponent(qType)}&limit=200`;
+            if (keyword) url += `&keyword=${encodeURIComponent(keyword)}`;
+            if (difficulty && difficulty !== 'all') url += `&difficulty=${encodeURIComponent(difficulty)}`;
+            const r = await scopedFetch(url);
             const data = await r.json().catch(() => ({}));
             if (!r.ok) {
                 setAuditMsg(data.detail || '加载未审核题目失败', 'error');
@@ -354,10 +421,39 @@
         }
 
 
+        async function loadDifficultyForQuestion() {
+            const { qType, qId } = getCurrentQTypeAndId();
+            state.currentDifficulty = null;
+            state.difficultyIsAiSuggested = false;
+            if (!qId || qId <= 0) {
+                renderDifficultyRow();
+                return;
+            }
+            try {
+                const r = await scopedFetch(`${API_BASE}/questions/${qType}/${qId}/tags`);
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) {
+                    renderDifficultyRow();
+                    return;
+                }
+                const tags = (data.tags || []).filter(t => t.tag_type === 'difficulty');
+                if (tags.length) {
+                    // 取首条（理论上 scoped upsert 后仅有一条）
+                    const t = tags[0];
+                    const mapped = DIFFICULTY_TAGNAME_TO_VALUE[t.tag_name];
+                    if (mapped) {
+                        state.currentDifficulty = mapped;
+                        state.difficultyIsAiSuggested = !t.is_confirmed;
+                    }
+                }
+            } catch (_) { /* ignore */ }
+            renderDifficultyRow();
+        }
+
         async function loadQuestionDetail() {
             const { qType, qId } = getCurrentQTypeAndId();
             if (!qId || qId <= 0) return;
-            const r = await fetch(`${API_BASE}/questions/${qType}/${qId}`);
+            const r = await scopedFetch(`${API_BASE}/questions/${qType}/${qId}`);
             const data = await r.json().catch(() => ({}));
             if (!r.ok) {
                 setAuditMsg(data.detail || '加载题目详情失败', 'error');
@@ -391,7 +487,7 @@
             placeholder.textContent = '文档加载中...';
             placeholder.classList.remove('hidden');
             iframe.classList.add('hidden');
-            iframe.src = `${API_BASE}/documents/${documentId}/render-html`;
+            iframe.src = withScope(`${API_BASE}/documents/${documentId}/render-html`);
             iframe.onload = () => {
                 placeholder.classList.add('hidden');
                 iframe.classList.remove('hidden');
@@ -507,7 +603,7 @@
             state.loading.aiSuggest = true;
             setBtnLoading(aiSuggestBtn, 'AI 推荐中...', true);
             try {
-                const r = await fetch(`${API_BASE}/questions/${qType}/${qId}/ai-tag-suggest`, {
+                const r = await scopedFetch(`${API_BASE}/questions/${qType}/${qId}/ai-tag-suggest`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ auto_apply: false, father_tag: getSelectedFatherTag() }),
@@ -617,6 +713,10 @@
                 score: Number(document.getElementById('editScore').value || 0),
                 operator: document.getElementById('editOperator').value || 'admin',
                 remark: document.getElementById('editRemark').value || '',
+                // 难度字段：用户手动选择 → 显式覆盖；保持 AI 建议（仍高亮但未点击）→ 传 null，后端隐式提升 is_confirmed
+                difficulty: (state.currentDifficulty && !state.difficultyIsAiSuggested)
+                    ? state.currentDifficulty
+                    : null,
             };
             if (qType === 'single' || qType === 'multiple') {
                 payload.option_a = document.getElementById('editOptionA').value;
@@ -660,7 +760,11 @@
                 showSubmitError('请至少保留或添加一个标签后再提交');
                 return;
             }
-            const r = await fetch(`${API_BASE}/questions/${qType}/${qId}/audit-submit`, {
+            // 难度未标注且也没有 AI 建议可隐式提升 → 提示但不阻塞
+            if (!state.currentDifficulty && !state.difficultyIsAiSuggested) {
+                showToast('本次提交未标注难度，可稍后在列表中筛选未标注补齐', 'info');
+            }
+            const r = await scopedFetch(`${API_BASE}/questions/${qType}/${qId}/audit-submit`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -680,10 +784,13 @@
             state.subTagItems = [];
             state.aiSuggestedTags = [];
             state.aiCandidateTags = [];
+            state.currentDifficulty = null;
+            state.difficultyIsAiSuggested = false;
             document.getElementById('qId').value = '';
             renderCurrentBanner();
             renderSubTagList();
             renderSuggestTags();
+            renderDifficultyRow();
             loadDocPreview(null);
             tagSearchListEl.innerHTML = '';
             await loadPendingQuestions();
@@ -696,13 +803,31 @@
             state.subTagItems = [];
             state.aiSuggestedTags = [];
             state.aiCandidateTags = [];
+            state.currentDifficulty = null;
+            state.difficultyIsAiSuggested = false;
             renderCurrentBanner();
+            renderDifficultyRow();
             await loadQuestionDetail();
             loadSubTags(getSelectedFatherTag());
             renderSuggestTags();
+            loadDifficultyForQuestion();
             setAuditMsg('已加载题目，请手动点击”AI 推荐标签”触发推荐', 'info');
             document.getElementById('editPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
+
+        document.getElementById('difficultyPillRow').addEventListener('click', (e) => {
+            const btn = e.target.closest('.diff-pill');
+            if (!btn) return;
+            const value = btn.dataset.value;
+            if (state.currentDifficulty === value && !state.difficultyIsAiSuggested) {
+                // 再次点击已确认的档位：取消选择
+                state.currentDifficulty = null;
+            } else {
+                state.currentDifficulty = value;
+            }
+            state.difficultyIsAiSuggested = false; // 手动点击后视为人工选择
+            renderDifficultyRow();
+        });
 
         document.getElementById('buildRelBtn').addEventListener('click', async () => {
             const btn = document.getElementById('buildRelBtn');
@@ -712,7 +837,7 @@
             status.textContent = '执行中…';
             status.className = 'mt-4 text-sm text-gray-600';
             try {
-                const r = await fetch(`${API_BASE}/recommendations/build-manual-knowledge-rel`, { method: 'POST' });
+                const r = await scopedFetch(`${API_BASE}/recommendations/build-manual-knowledge-rel`, { method: 'POST' });
                 const data = await r.json();
                 status.classList.remove('hidden');
                 if (!r.ok) {
@@ -773,6 +898,7 @@
         });
 
         document.getElementById('loadPendingBtn').addEventListener('click', loadPendingQuestions);
+        document.getElementById('qDifficulty').addEventListener('change', loadPendingQuestions);
         document.getElementById('qType').addEventListener('change', async () => {
             document.getElementById('qId').value = '';
             state.currentQuestionId = 0;
@@ -780,8 +906,11 @@
             state.pendingTagNames = new Map();
             state.aiSuggestedTags = [];
             state.aiCandidateTags = [];
+            state.currentDifficulty = null;
+            state.difficultyIsAiSuggested = false;
             renderCurrentBanner();
             renderSuggestTags();
+            renderDifficultyRow();
             loadDocPreview(null);
             tagSearchListEl.innerHTML = '';
             await loadPendingQuestions();
@@ -820,6 +949,7 @@
         }
 
         renderSuggestTags();
+        renderDifficultyRow();
         loadFatherTagOptions().catch(() => { });
         loadPendingQuestions().catch(() => { });
     </script>

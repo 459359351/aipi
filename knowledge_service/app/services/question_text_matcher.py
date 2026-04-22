@@ -11,6 +11,7 @@ import jieba.analyse
 from sqlalchemy.orm import Session
 
 from ..models.question import SingleChoice, MultipleChoice, Judge, Essay
+from ..security.company_scope import CompanyScope, apply_question_scope
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ def find_similar_by_text(
     source_question_text: str,
     limit: int = 10,
     exclude_ids: Set[Tuple[str, int]] | None = None,
+    scope: CompanyScope | None = None,
     similarity_threshold: float = 0.20,
 ) -> List[Tuple[str, int, object]]:
     """
@@ -77,12 +79,10 @@ def find_similar_by_text(
     scored: List[Tuple[float, str, int, object]] = []
 
     for q_type, model in QUESTION_MODEL_MAP.items():
-        candidates = (
-            db.query(model)
-            .order_by(model.id.desc())
-            .limit(_PER_TABLE_CAP)
-            .all()
-        )
+        query = db.query(model)
+        if scope is not None:
+            query = apply_question_scope(query, scope, q_type, model)
+        candidates = query.order_by(model.id.desc()).limit(_PER_TABLE_CAP).all()
         for q in candidates:
             if (q_type, q.id) in exclude_ids:
                 continue
