@@ -5,14 +5,17 @@
 import logging
 from typing import Optional, List, Tuple
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models.document import Document
+from ..models.document_company_scope_rel import DocumentCompanyScopeRel
 from ..models.document_tag_rel import DocumentTagRel
 from ..models.father_tag import FatherTag
 from ..models.knowledge_point import KnowledgePoint
 from ..models.knowledge_tag_rel import knowledge_tag_rel
 from ..models.tag import Tag
+from ..security.company_scope import CompanyScope, apply_document_scope
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +38,12 @@ def get_documents_list(
     skip: int = 0,
     limit: int = 50,
     status: Optional[str] = None,
+    scope: Optional[CompanyScope] = None,
 ) -> Tuple[List[Document], int]:
     """分页获取文档列表，可按状态筛选"""
     query = db.query(Document)
+    if scope:
+        query = apply_document_scope(query, scope, Document.id)
     if status:
         query = query.filter(Document.status == status)
     total = query.count()
@@ -45,9 +51,16 @@ def get_documents_list(
     return docs, total
 
 
-def get_document_by_id(db: Session, document_id: int) -> Optional[Document]:
+def get_document_by_id(
+    db: Session,
+    document_id: int,
+    scope: Optional[CompanyScope] = None,
+) -> Optional[Document]:
     """根据 ID 查询文档"""
-    return db.query(Document).filter(Document.id == document_id).first()
+    query = db.query(Document)
+    if scope:
+        query = apply_document_scope(query, scope, Document.id)
+    return query.filter(Document.id == document_id).first()
 
 
 def update_document_status(
@@ -90,10 +103,16 @@ def get_knowledge_points_by_document(
 
 
 def get_knowledge_point_by_id(
-    db: Session, kp_id: int
+    db: Session,
+    kp_id: int,
+    scope: Optional[CompanyScope] = None,
 ) -> Optional[KnowledgePoint]:
     """根据 ID 查询单个知识点"""
-    return db.query(KnowledgePoint).filter(KnowledgePoint.id == kp_id).first()
+    query = db.query(KnowledgePoint)
+    if scope:
+        query = query.join(Document, Document.id == KnowledgePoint.document_id)
+        query = apply_document_scope(query, scope, Document.id)
+    return query.filter(KnowledgePoint.id == kp_id).first()
 
 
 def get_or_create_tag(
@@ -293,3 +312,30 @@ def update_document_metadata(db: Session, document_id: int, **fields) -> Optiona
         logger.info(f"文档元数据已更新: id={document_id}, fields={list(fields.keys())}")
 
     return doc
+
+
+def get_document_company_ids(db: Session, document_id: int) -> List[str]:
+    rows = db.execute(
+        select(DocumentCompanyScopeRel.company_id)
+        .where(DocumentCompanyScopeRel.document_id == document_id)
+        .order_by(DocumentCompanyScopeRel.company_id)
+    ).all()
+    return [str(row[0]) for row in rows]
+
+
+def replace_document_company_scopes(
+    db: Session,
+    document_id: int,
+    company_ids: List[str],
+) -> None:
+    db.query(DocumentCompanyScopeRel).filter(
+        DocumentCompanyScopeRel.document_id == document_id
+    ).delete(synchronize_session=False)
+    for company_id in company_ids:
+        db.add(DocumentCompanyScopeRel(document_id=document_id, company_id=company_id))
+    db.commit()
+    logger.info(
+        "文档公司作用域已更新: document_id=%s company_ids=%s",
+        document_id,
+        company_ids,
+    )

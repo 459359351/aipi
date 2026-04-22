@@ -143,6 +143,36 @@ MinIO 默认端口 9000，`.env` 中已配置 `MINIO_ENDPOINT=127.0.0.1:9000`。
 | GET    | `/api/v1/knowledge-points/{kp_id}`              | 查询单个知识点     |
 | GET    | `/health`                                       | 健康检查           |
 
+## 公司作用域权限契约
+
+所有返回文档、知识点、题目、出题任务、审题数据、推荐结果的接口，现在都要求显式传入下面两个查询参数：
+
+- `scope_role`: `global_admin` 或 `branch_admin`
+- `scope_company_id`: 调用方所属公司/分公司 ID
+
+写接口还需要遵守下面的归属规则：
+
+- 新建文档时必须显式传 `target_company_ids`
+- `target_company_ids` 表示该条数据最终归属于哪些公司
+- 总公司管理员可以传多个公司 ID
+- 分公司管理员只能传自己的 `scope_company_id`
+- 文档派生的知识点、出题任务、AI 题目自动继承文档归属，不允许单独修改题目归属
+- `document_id is null` 的人工题通过 `question_company_scope_rel` 维护直接归属
+
+默认可见性：
+
+- 总公司管理员可见所有数据，包括尚未绑定任何公司归属的历史数据
+- 分公司管理员只能看到命中本公司归属的数据
+- 未绑定公司归属的历史数据，对分公司管理员不可见
+
+本地调试页面默认会从 URL 查询参数或 `localStorage` 读取：
+
+- `scope_role`
+- `scope_company_id`
+- `target_company_ids`（逗号分隔，仅上传页用于默认填充）
+
+未提供时，静态页会默认用 `global_admin / GLOBAL` 作为演示值。
+
 ## 核心流程
 
 ```

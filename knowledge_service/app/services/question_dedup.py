@@ -16,6 +16,7 @@ from ..models.question import SingleChoice, MultipleChoice, Judge, Essay
 from ..models.question_knowledge_rel import QuestionKnowledgeRel
 from ..models.question_tag_rel import question_tag_rel
 from ..models.tag import Tag
+from ..security.company_scope import CompanyScope, apply_question_scope
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,7 @@ class SupplementContext:
     knowledge_ids: List[int] = field(default_factory=list)
     document_id: Optional[int] = None
     question_text: Optional[str] = None
+    scope: Optional[CompanyScope] = None
 
 
 def assemble_question_set(
@@ -234,6 +236,7 @@ def assemble_question_set(
                 question_text=supplement_ctx.question_text,
                 limit=(needed - len(selected)) * 3,
                 exclude=global_selected,
+                scope=supplement_ctx.scope,
                 enable_text_match=True,
             )
             # 只取当前题型的结果
@@ -260,8 +263,16 @@ def assemble_question_set(
             model = QUESTION_MODEL_MAP.get(q_type)
             if model:
                 exclude_ids = {c.question_id for c in selected}
+                supplement_query = db.query(model)
+                if supplement_ctx and supplement_ctx.scope:
+                    supplement_query = apply_question_scope(
+                        supplement_query,
+                        supplement_ctx.scope,
+                        q_type,
+                        model,
+                    )
                 supplement = (
-                    db.query(model)
+                    supplement_query
                     .filter(~model.id.in_(exclude_ids) if exclude_ids else True)
                     .order_by(func.rand())
                     .limit(needed - len(selected))

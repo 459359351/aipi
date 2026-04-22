@@ -19,6 +19,7 @@ class DocumentUploadRequest(BaseModel):
     effective_date: Optional[date] = Field(None, description="生效日期")
     security_level: Optional[str] = Field("internal", description="安全等级")
     upload_user: Optional[str] = Field(None, max_length=128, description="上传用户标识")
+    target_company_ids: List[str] = Field(..., description="文档归属的公司ID列表")
 
 
 class DocumentUpdateRequest(BaseModel):
@@ -30,6 +31,7 @@ class DocumentUpdateRequest(BaseModel):
     version: Optional[str] = Field(None, max_length=50, description="版本号")
     effective_date: Optional[date] = Field(None, description="生效日期")
     security_level: Optional[str] = Field(None, max_length=32, description="安全等级")
+    target_company_ids: Optional[List[str]] = Field(None, description="显式更新文档归属公司ID列表")
 
 
 # ── 响应模型 ──────────────────────────────────────────────
@@ -62,6 +64,7 @@ class DocumentResponse(BaseModel):
     updated_at: datetime
     father_tags: List[TagInfo] = []
     sub_tags: List[TagInfo] = []
+    company_ids: List[str] = []
 
     model_config = {"from_attributes": True}
 

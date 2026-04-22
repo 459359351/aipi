@@ -219,6 +219,24 @@
 
     <script>
         let currentDocId = null;
+        function getScopeContext() {
+            const params = new URLSearchParams(window.location.search);
+            const role = params.get('scope_role') || localStorage.getItem('demo_scope_role') || 'global_admin';
+            const companyId = params.get('scope_company_id') || localStorage.getItem('demo_scope_company_id') || 'GLOBAL';
+            return { role, companyId };
+        }
+
+        function withScope(url) {
+            const scopedUrl = new URL(url, window.location.origin);
+            const scope = getScopeContext();
+            scopedUrl.searchParams.set('scope_role', scope.role);
+            scopedUrl.searchParams.set('scope_company_id', scope.companyId);
+            return `${scopedUrl.pathname}${scopedUrl.search}`;
+        }
+
+        function scopedFetch(url, options) {
+            return fetch(withScope(url), options);
+        }
 
         async function loadDocument() {
             const params = new URLSearchParams(window.location.search);
@@ -230,7 +248,7 @@
             }
 
             try {
-                const response = await fetch(`/api/v1/documents/${currentDocId}`);
+                const response = await scopedFetch(`/api/v1/documents/${currentDocId}`);
                 if (!response.ok) {
                     throw new Error('文档不存在或已被删除');
                 }
@@ -294,7 +312,7 @@
             empty.classList.add('hidden');
 
             try {
-                const response = await fetch(`/api/v1/knowledge-points/by-document/${currentDocId}`);
+                const response = await scopedFetch(`/api/v1/knowledge-points/by-document/${currentDocId}`);
                 if (!response.ok) throw new Error('加载知识点失败');
 
                 const data = await response.json();
@@ -352,7 +370,7 @@
             btn.textContent = '⏳ 清理旧数据...';
 
             try {
-                const response = await fetch(`/api/v1/documents/${currentDocId}/reparse`, {
+                const response = await scopedFetch(`/api/v1/documents/${currentDocId}/reparse`, {
                     method: 'POST'
                 });
 
@@ -412,7 +430,7 @@
             }
 
             try {
-                const response = await fetch(`/api/v1/documents/${currentDocId}`, {
+                const response = await scopedFetch(`/api/v1/documents/${currentDocId}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
@@ -438,14 +456,15 @@
             btn.textContent = '🗑️ 删除中...';
 
             try {
-                const response = await fetch(`/api/v1/documents/${currentDocId}`, {
+                const response = await scopedFetch(`/api/v1/documents/${currentDocId}`, {
                     method: 'DELETE',
                 });
                 if (response.ok) {
                     const data = await response.json();
                     const d = data.detail;
                     alert(`✅ 文档已删除\n知识点: ${d.knowledge_points_deleted} 条\nDify: 成功 ${d.dify_deleted} / 失败 ${d.dify_failed}\nMinIO: ${d.minio_deleted ? '已删除' : '未删除'}`);
-                    window.location.href = '/static/list.html';
+                    const scope = getScopeContext();
+                    window.location.href = `/static/list.html?scope_role=${encodeURIComponent(scope.role)}&scope_company_id=${encodeURIComponent(scope.companyId)}`;
                 } else {
                     const data = await response.json();
                     alert('❌ 删除失败: ' + (data.detail || '未知错误'));

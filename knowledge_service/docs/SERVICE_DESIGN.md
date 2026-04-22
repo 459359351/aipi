@@ -1,7 +1,7 @@
 # 考试平台 AI 知识处理服务 — 设计文档
 
-> 版本：v1.4
-> 最后更新：2026-04-13
+> 版本：v1.5
+> 最后更新：2026-04-22
 > 状态：已实现
 
 ---
@@ -76,6 +76,23 @@
 - MinIO（对象存储服务）
 - Dify（RAG 知识库平台，可选）
 - 阿里云 DashScope API Key（用于 Qwen LLM）
+
+### 1.5 公司作用域权限模型
+
+2026-04-22 起，服务对题目、出题数据、题目文档及其直接衍生链路增加公司作用域权限控制，核心规则如下：
+
+1. 所有相关接口都显式接收调用方作用域参数：
+   - `scope_role`: `global_admin` / `branch_admin`
+   - `scope_company_id`: 调用方所属公司 ID
+2. 文档归属是主源头，使用 `document_company_scope_rel` 表维护多对多绑定。
+3. 文档派生的知识点、出题任务、AI 题目动态继承文档归属，不单独物化公司字段。
+4. `document_id is null` 的人工题使用 `question_company_scope_rel` 维护直接公司归属。
+5. 写接口中，`target_company_ids` 与调用方作用域分离：
+   - 总公司管理员可维护多公司归属
+   - 分公司管理员只能绑定自己的 `scope_company_id`
+6. 空归属历史数据默认仅总公司管理员可见，分公司管理员不可见。
+
+这套模型用于统一文档读取、知识点读取、出题任务查询、题目审核、题目推荐和组卷的可见性判断。
 
 ---
 
@@ -414,7 +431,7 @@ stateDiagram-v2
 - `ai`：AI 生成的候选标签（原 `candidate`，已全局迁移）。当 LLM 发现预设标签不足时，会把新增建议写入 `new_tags`，服务侧会将其入库为 `tags(tag_type=ai)` 供人工审核后再调整为 `human`
 - `chapter`：来源章节/条款（如：总则、第三条等）
 - `knowledge_type`：知识类型（如：定义、流程、数字、时间节点、职责权限、禁止事项等）
-- `difficulty`：难度（可选：基础/进阶）
+- `difficulty`：难度（可选：简单 / 一般 / 困难）
 
 #### 3.1.4 knowledge_tag_rel（知识点-标签关联表）
 
@@ -613,6 +630,51 @@ stateDiagram-v2
 - **人工题**：在 LLM 提炼知识点并挂载预设标签后，同步写入 `question_tag_rel`；
 - **人工维护题**：可通过 `POST /api/v1/questions/{question_type}/{question_id}/tags` 覆盖设置标签（支持 tag_ids 或 tag_names）。
 
+#### 3.2.5 document_company_scope_rel（文档-公司作用域关联表）
+
+用于承载文档的多公司归属，是本次权限控制的主源头。
+
+| 字段        | 类型         | 约束                                              | 说明 |
+|-----------|------------|-------------------------------------------------|----|
+| id        | BIGINT     | PK, AUTO_INCREMENT                              | 主键 |
+| document_id | BIGINT   | NOT NULL, FK(documents.id), INDEX               | 文档 ID |
+| company_id | VARCHAR(128) | NOT NULL, INDEX                              | 公司/分公司作用域 ID |
+| created_at | DATETIME  | NOT NULL, DEFAULT CURRENT_TIMESTAMP             | 创建时间 |
+| updated_at | DATETIME  | NOT NULL, DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP | 更新时间 |
+
+唯一约束：
+
+- `uk_document_company_scope_rel(document_id, company_id)`
+
+使用语义：
+
+- 一份文档可以绑定多个公司 ID
+- 文档派生的知识点、出题任务、AI 题目都动态继承这里的归属
+- 若某文档没有任何归属行，则仅总公司管理员可见
+
+#### 3.2.6 question_company_scope_rel（题目-公司作用域关联表）
+
+用于承载 `document_id is null` 的人工题直接归属，避免推荐和审核链路从无文档题旁路泄漏数据。
+
+| 字段          | 类型           | 约束                              | 说明 |
+|-------------|--------------|---------------------------------|----|
+| id          | BIGINT       | PK, AUTO_INCREMENT              | 主键 |
+| question_type | VARCHAR(16) | NOT NULL, INDEX                 | 题型：single / multiple / judge / essay |
+| question_id | INT          | NOT NULL, INDEX                 | 题目 ID（对应 `tb_*` 主键） |
+| company_id  | VARCHAR(128) | NOT NULL, INDEX                 | 公司/分公司作用域 ID |
+| created_at  | DATETIME     | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 创建时间 |
+| updated_at  | DATETIME     | NOT NULL, DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP | 更新时间 |
+
+唯一约束：
+
+- `uk_question_company_scope_rel(question_type, question_id, company_id)`
+
+使用语义：
+
+- 仅用于无文档人工题或未来显式直绑题目
+- 有 `document_id` 的题目不应写这里的直绑归属，而应继承文档归属
+- 若人工题没有任何归属行，则仅总公司管理员可见
+
 ### 3.3 数据库迁移脚本
 
 
@@ -622,8 +684,11 @@ stateDiagram-v2
 | `migrate_questions.sql` | 为历史 ai_tb_* 表添加 document_id/task_id 列及索引；创建 question_tasks 表（旧方案，已不再写入 ai_tb_*） | 仅兼容旧数据时使用 |
 | `migrate_tb_questions.sql` | 为正式题库表 tb_single_choices / tb_multiple_choices / tb_judges / tb_essays 添加 document_id/task_id/review_status/is_ai_generated 列及索引 | 启用 AI 出题写入 tb_* 前 |
 | `migrate_tag_system.sql` | 创建 `question_tag_rel` 并初始化一批党建领域预设标签（domain/knowledge_type/difficulty） | 启用标签驱动推荐前 |
+| `migrate_rename_difficulty_tags_20260422.sql` | 将旧难度标签 `基础 / 进阶 / 综合` 原地改名为 `简单 / 一般 / 困难`（ID 保持不变） | 启用新难度体系前 |
+| `migrate_refresh_tags_20260422.sql` | 刷新和补齐题目难度/标签相关预设数据 | 标签体系刷新时 |
 | `migrate_father_tags.sql` | 创建 `father_tags` 表；为 `tags` 表添加 `father_tag` VARCHAR(128) 和 `is_enabled` SMALLINT 列及索引 | 启用一级标签分类前 |
 | `migrate_documents_tags_rel.sql` | 创建 `documents_tags_rel` 文档-标签多对多关联表（含外键和索引） | 启用文档多标签选择前 |
+| `migrate_company_scope_permissions_20260422.sql` | 创建 `document_company_scope_rel` / `question_company_scope_rel` 两张公司作用域权限表 | 启用公司权限控制前 |
 
 
 > 两个脚本均需使用具有 CREATE / ALTER 权限的 MySQL 账号手动执行，应用层 `aipi_user` 通常无此权限。
@@ -633,6 +698,145 @@ stateDiagram-v2
 ## 4. API 设计
 
 所有接口挂载在 `/api/v1` 路径下。
+
+### 4.0 公司作用域接口对接总则
+
+#### 4.0.1 通用参数契约
+
+所有返回或操作**文档、知识点、出题任务、题目、审题、推荐/组卷**数据的接口，现在都要求显式传入：
+
+| 参数 | 位置 | 必填 | 说明 |
+|---|---|---|---|
+| `scope_role` | Query | 是 | `global_admin` / `branch_admin` |
+| `scope_company_id` | Query | 是 | 调用方所属公司/分公司 ID |
+
+安全边界要求：
+
+- `scope_role` 和 `scope_company_id` 必须由可信上游服务、网关或服务端调用方注入
+- 不允许把这两个参数当作终端用户可自行填写的普通前端字段
+- 若本服务直接暴露给浏览器或非可信调用方，必须先接入真实认证/鉴权中间件，再从登录态推导这两个值
+- 当前内置静态页使用 URL / `localStorage` 传递 scope 仅用于本地调试，不代表生产安全模型
+
+写接口如果要新建或修改“数据归属”，还会额外使用：
+
+| 参数 | 位置 | 必填 | 说明 |
+|---|---|---|---|
+| `target_company_ids` | Form / JSON Body | 视接口而定 | 目标数据最终归属的公司 ID 列表 |
+
+规则：
+
+- 总公司管理员可传多个 `target_company_ids`
+- 分公司管理员只能传自己的 `scope_company_id`
+- 文档派生数据必须继承文档归属，不能单独改题目归属
+- 只有 `document_id is null` 的人工题允许通过题目接口改直接归属
+
+#### 4.0.2 本次受影响接口清单
+
+**文档链路**
+
+| 方法 | 路径 | 新增参数 |
+|---|---|---|
+| POST | `/api/v1/documents/upload` | Query: `scope_role` `scope_company_id`；Form: `target_company_ids`（必填） |
+| GET | `/api/v1/documents` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/documents/{document_id}` | Query: `scope_role` `scope_company_id` |
+| POST | `/api/v1/documents/{document_id}/reparse` | Query: `scope_role` `scope_company_id` |
+| PUT | `/api/v1/documents/{document_id}` | Query: `scope_role` `scope_company_id`；Body: `target_company_ids`（可选，仅在改归属时传） |
+| DELETE | `/api/v1/documents/{document_id}` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/documents/{document_id}/render-html` | Query: `scope_role` `scope_company_id` |
+
+**知识点链路**
+
+| 方法 | 路径 | 新增参数 |
+|---|---|---|
+| GET | `/api/v1/knowledge-points/by-document/{document_id}` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/knowledge-points/{kp_id}` | Query: `scope_role` `scope_company_id` |
+
+**出题 / 题目 / 审题链路**
+
+| 方法 | 路径 | 新增参数 |
+|---|---|---|
+| POST | `/api/v1/questions/generate` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/questions/tasks/{task_id}` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/questions/tasks` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/questions/by-document/{document_id}` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/questions/by-task/{task_id}` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/questions/audit/pending` | Query: `scope_role` `scope_company_id` |
+| POST | `/api/v1/questions/tags/resolve` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/questions/{question_type}/{question_id}` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/questions/{question_type}/{question_id}/tags` | Query: `scope_role` `scope_company_id` |
+| POST | `/api/v1/questions/{question_type}/{question_id}/tags` | Query: `scope_role` `scope_company_id` |
+| PATCH | `/api/v1/questions/{question_type}/{question_id}/tags/confirm` | Query: `scope_role` `scope_company_id` |
+| PUT | `/api/v1/questions/{question_type}/{question_id}` | Query: `scope_role` `scope_company_id`；Body: `target_company_ids`（可选，仅无文档人工题改归属时允许） |
+| POST | `/api/v1/questions/{question_type}/{question_id}/audit-submit` | Query: `scope_role` `scope_company_id`；Body: `target_company_ids`（可选，仅无文档人工题改归属时允许） |
+| POST | `/api/v1/questions/{question_type}/{question_id}/ai-tag-suggest` | Query: `scope_role` `scope_company_id` |
+| POST | `/api/v1/questions/batch/ai-tag-suggest` | Query: `scope_role` `scope_company_id` |
+
+**推荐 / 练习 / 组卷链路**
+
+| 方法 | 路径 | 新增参数 |
+|---|---|---|
+| GET | `/api/v1/recommendations/by-document/{document_id}` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/recommendations/by-question` | Query: `scope_role` `scope_company_id` |
+| POST | `/api/v1/recommendations/build-manual-knowledge-rel` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/recommendations/by-profile/{user_id}` | Query: `scope_role` `scope_company_id` |
+| POST | `/api/v1/recommendations/behaviors/record` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/recommendations/wrong-question/random` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/recommendations/question-set` | Query: `scope_role` `scope_company_id` |
+| GET | `/api/v1/recommendations/by-tags` | Query: `scope_role` `scope_company_id` |
+| POST | `/api/v1/recommendations/behaviors/batch-record` | Query: `scope_role` `scope_company_id` |
+| POST | `/api/v1/recommendations/profiles/upsert` | Query: `scope_role` `scope_company_id` |
+
+#### 4.0.3 本次明确不加权限参数的接口
+
+以下接口本次不做公司隔离：
+
+- `/api/v1/tags/*`
+- `/api/v1/users`
+- `/api/v1/banks`
+- `/api/v1/assessment-batches`
+
+它们不直接返回题目/文档主数据，但调用方后续如果再拿这些结果去查题目或文档，仍必须带上新的公司作用域参数。
+
+#### 4.0.4 存量数据回填建议
+
+本次上线允许历史数据暂不回填，但为了让分公司管理员最终能看到老数据，后续建议按下面顺序补：
+
+1. **先回填文档归属**
+   - 目标表：`document_company_scope_rel`
+   - 来源：由业务方根据文档真实归属，给每个历史 `documents.id` 补上一个或多个 `company_id`
+   - 效果：知识点、出题任务、AI 题目会自动继承，无需再额外回填这三类表
+
+2. **再回填无文档人工题归属**
+   - 目标表：`question_company_scope_rel`
+   - 范围：仅 `tb_single_choices / tb_multiple_choices / tb_judges / tb_essays` 中 `document_id is null` 的题
+   - 主键维度：`(question_type, question_id, company_id)`
+
+3. **不需要回填的表**
+   - `knowledge_points`
+   - `question_tasks`
+   - `question_audit_logs`
+   - 这三类表都不需要新增公司字段，也不需要单独补权限数据
+
+4. **空归属历史数据的当前行为**
+   - 总公司管理员：可见
+   - 分公司管理员：不可见
+
+5. **推荐的回填执行顺序**
+   - 先补 `document_company_scope_rel`
+   - 再补 `question_company_scope_rel`
+   - 最后抽样验证推荐、审核、组卷链路是否能看到预期数据
+
+#### 4.0.5 用户画像与行为数据的公司边界
+
+推荐接口中的 `user_profiles`、`user_question_behaviors` 当前仍以裸 `user_id` 作为业务键，没有独立的 `company_id` 字段。
+
+上线约束：
+
+- 若上游能保证 `user_id` 在全集团唯一，则可直接沿用
+- 若 `user_id` 只在分公司内唯一，则调用方必须传入已命名空间化的用户标识，例如 `branch-a:10001`
+- 若后续要求后端强制隔离用户画像和行为数据，需要新增 `company_id` 字段或用户-公司关联表，并把 `profiles/upsert`、`behaviors/record`、`behaviors/batch-record`、`recommend_by_profile()`、`_behavior_penalty()` 全部改为 `(company_id, user_id)` 维度
+
+当前公司作用域过滤已经限制“推荐结果中的题目可见性”，但不会自动阻止不同公司复用同一个 `user_id` 导致画像/行为互相覆盖。因此这部分属于调用方对接时必须确认的用户 ID 规范。
 
 ### 4.1 文档管理 API
 
@@ -653,6 +857,12 @@ stateDiagram-v2
 #### POST /upload — 上传文档
 
 **请求**：`multipart/form-data`，包含 file 和元数据表单字段（见 2.1 节）。上传时可通过 `father_tag_ids` 和 `tag_ids`（JSON 字符串）关联多个一级/二级标签，关联关系写入 `documents_tags_rel` 表。
+
+权限相关补充：
+
+- Query 必填：`scope_role`、`scope_company_id`
+- Form 必填：`target_company_ids`，格式为 JSON 数组字符串，如 `["branch-a","branch-b"]`
+- 分公司管理员上传时，`target_company_ids` 只能包含自己的 `scope_company_id`
 
 **响应**（200）：
 
@@ -709,6 +919,12 @@ stateDiagram-v2
   "business_domain": "党建管理"
 }
 ```
+
+权限相关补充：
+
+- Query 必填：`scope_role`、`scope_company_id`
+- 若本次要修改文档归属，则在 Body 中额外传 `target_company_ids`
+- 若仅修改元数据，不传 `target_company_ids` 时，原有归属保持不变
 
 #### DELETE /{document_id} — 删除文档
 
@@ -824,6 +1040,10 @@ stateDiagram-v2
 | multiple_choice_options | int           | 4    | 4-5  | 多选题选项数（仅当 multiple_choice_count 非 None 时有效） |
 | judge_count             | Optional[int] | None | 0-50 | 判断题数量；**None = 跳过**；**0 = 按知识点数量出题** |
 | essay_count             | Optional[int] | None | 0-20 | 简答题数量；**None = 跳过**；**0 = 不生成**（简答题可综合多个知识点成一道题） |
+| single_choice_difficulty_strategy | Optional[dict] | None | - | 单选题难度策略 |
+| multiple_choice_difficulty_strategy | Optional[dict] | None | - | 多选题难度策略 |
+| judge_difficulty_strategy | Optional[dict] | None | - | 判断题难度策略 |
+| essay_difficulty_strategy | Optional[dict] | None | - | 简答题难度策略 |
 
 
 **校验规则**：
@@ -832,6 +1052,31 @@ stateDiagram-v2
 - 文档下必须有已解析的知识点
 - 至少一种题型被启用（非 None）且有效数量之和 > 0
 - config dict 仅包含非 None 的字段（省略的字段在后台任务中视为跳过）
+- 若传了 `*_difficulty_strategy`，后端会在请求期校验其结构是否合法；非法直接返回 400
+
+**difficulty_strategy 结构说明**：
+
+```json
+{ "mode": "single", "level": "简单" }
+```
+
+```json
+{
+  "mode": "ratio",
+  "ratio": {
+    "简单": 30,
+    "一般": 50,
+    "困难": 20
+  }
+}
+```
+
+预设模式：
+
+- `single`
+- `ratio`
+- `exam_sprint`
+- `beginner_friendly`
 
 **响应**（200）：
 
@@ -870,6 +1115,34 @@ stateDiagram-v2
 | document_id | int（可选） | 按文档筛选             |
 | skip        | int     | 偏移量，默认 0          |
 | limit       | int     | 每页数量，默认 50，最大 200 |
+
+#### GET /audit/pending — 待审核题目列表
+
+**查询参数**：
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `question_type` | string | `single / multiple / judge / essay` |
+| `keyword` | string | 题干关键字（可选） |
+| `difficulty` | string | `simple / normal / hard / unlabeled / all`（可选） |
+| `skip` | int | 偏移量 |
+| `limit` | int | 每页数量 |
+
+筛选语义：
+
+- `simple / normal / hard`：命中任意对应难度标签，不区分 `is_confirmed`
+- `unlabeled`：不存在任何 `tag_type='difficulty'` 的关联
+- `all` 或不传：不过滤难度
+
+#### POST /{question_type}/{question_id}/tags — 覆盖设置题目标签
+
+该接口用于覆盖普通题目标签，不负责维护难度标签。
+
+难度标签维护规则：
+
+- 该接口会保留已有 `tag_type='difficulty'` 的关联
+- 请求中误传的 difficulty tag_id 会被忽略
+- 难度只通过 `POST /{question_type}/{question_id}/audit-submit` 的 `difficulty` 字段确认或改写
 
 
 #### GET /by-document/{document_id} — 查询文档已生成题目
@@ -2001,4 +2274,3 @@ CREATE TABLE IF NOT EXISTS question_tasks (
     INDEX idx_qt_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
-

@@ -201,6 +201,25 @@
         let currentStartAt = null;
         let questionSetData = null; // { groups: { single: [...], ... } }
 
+        function getScopeContext() {
+            const params = new URLSearchParams(window.location.search);
+            const role = params.get('scope_role') || localStorage.getItem('demo_scope_role') || 'global_admin';
+            const companyId = params.get('scope_company_id') || localStorage.getItem('demo_scope_company_id') || 'GLOBAL';
+            return { role, companyId };
+        }
+
+        function withScope(url) {
+            const scopedUrl = new URL(url, window.location.origin);
+            const scope = getScopeContext();
+            scopedUrl.searchParams.set('scope_role', scope.role);
+            scopedUrl.searchParams.set('scope_company_id', scope.companyId);
+            return `${scopedUrl.pathname}${scopedUrl.search}`;
+        }
+
+        function scopedFetch(url, options) {
+            return fetch(withScope(url), options);
+        }
+
         // ─── Tab 切换 ───────────────────────────────────
         function switchTab(tab) {
             currentTab = tab;
@@ -259,7 +278,7 @@
         async function loadDocuments() {
             const sel = document.getElementById('docSelect');
             try {
-                const r = await fetch(`${API_BASE}/documents?limit=100&status=completed`);
+                const r = await scopedFetch(`${API_BASE}/documents?limit=100&status=completed`);
                 const data = await r.json();
                 sel.innerHTML = '<option value="">-- 请选择已解析完成的文档 --</option>';
                 (data.items || []).forEach(d => {
@@ -332,7 +351,7 @@
                     if (!name) { showError('请先输入姓名'); return; }
                     const interests = (document.getElementById('interestsInput').value || '').trim();
                     const tags = interests ? interests.split(',').map(x => x.trim()).filter(Boolean) : [];
-                    await fetch(`${API_BASE}/recommendations/profiles/upsert`, {
+                    await scopedFetch(`${API_BASE}/recommendations/profiles/upsert`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ user_id: name, interests: tags }),
@@ -343,7 +362,7 @@
                     if (tagIds.length === 0) { showError('请选择至少一个二级标签'); return; }
                     // Upsert profile with position/level
                     if (name) {
-                        await fetch(`${API_BASE}/recommendations/profiles/upsert`, {
+                        await scopedFetch(`${API_BASE}/recommendations/profiles/upsert`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -363,7 +382,7 @@
                     const bankId = document.getElementById('bankSelect').value;
                     if (!bankId) { showError('请先选择题库'); return; }
 
-                    const wr = await fetch(`${API_BASE}/recommendations/wrong-question/random?user_id=${wrongUserId}&bank_ids=${bankId}`);
+                    const wr = await scopedFetch(`${API_BASE}/recommendations/wrong-question/random?user_id=${wrongUserId}&bank_ids=${bankId}`);
                     if (!wr.ok) throw new Error((await wr.json().catch(() => ({}))).detail || '获取错题失败');
                     const wData = await wr.json();
                     if (!wData.found) { showError('该批次下暂无错题记录'); return; }
@@ -378,7 +397,7 @@
                     return; // 提前 return，跳过下面的通用逻辑
                 }
 
-                const r = await fetch(url);
+                const r = await scopedFetch(url);
                 if (!r.ok) throw new Error(await r.text());
                 const data = await r.json();
                 const items = data.items || [];
@@ -417,7 +436,7 @@
                     // Upsert profile
                     if (name) {
                         const tags = interests.split(',').map(x => x.trim()).filter(Boolean);
-                        await fetch(`${API_BASE}/recommendations/profiles/upsert`, {
+                        await scopedFetch(`${API_BASE}/recommendations/profiles/upsert`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ user_id: name, interests: tags }),
@@ -431,7 +450,7 @@
                     const lvl = document.getElementById('levelInput').value.trim();
                     // Upsert profile
                     if (name) {
-                        await fetch(`${API_BASE}/recommendations/profiles/upsert`, {
+                        await scopedFetch(`${API_BASE}/recommendations/profiles/upsert`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ user_id: name, position: pos, level: lvl }),
@@ -446,7 +465,7 @@
                     params = `mode=wrong_questions&user_id=${wrongUserId}&bank_ids=${bankId}`;
                 }
 
-                const r = await fetch(`${API_BASE}/recommendations/question-set?${params}`);
+                const r = await scopedFetch(`${API_BASE}/recommendations/question-set?${params}`);
                 if (!r.ok) {
                     const errData = await r.json().catch(() => ({}));
                     throw new Error(errData.detail || '获取套题失败');
@@ -654,7 +673,7 @@
 
             // 批量记录行为
             if (name && behaviorRecords.length > 0) {
-                fetch(`${API_BASE}/recommendations/behaviors/batch-record`, {
+                scopedFetch(`${API_BASE}/recommendations/behaviors/batch-record`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ user_id: name, answers: behaviorRecords }),
@@ -704,7 +723,7 @@
             const name = getName();
             if (!name || !currentQuestion) return;
             const spent = currentStartAt ? Math.max(0, Math.round((Date.now() - currentStartAt) / 1000)) : 0;
-            await fetch(`${API_BASE}/recommendations/behaviors/record`, {
+            await scopedFetch(`${API_BASE}/recommendations/behaviors/record`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -725,7 +744,7 @@
             loading.classList.remove('hidden');
             list.innerHTML = '';
             try {
-                const r = await fetch(
+                const r = await scopedFetch(
                     `${API_BASE}/recommendations/by-question?question_type=${currentQuestion.question_type}&question_id=${currentQuestion.question_id}&limit=10&user_id=${encodeURIComponent(getName())}`
                 );
                 if (!r.ok) throw new Error(await r.text());

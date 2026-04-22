@@ -36,6 +36,22 @@ CREATE TABLE IF NOT EXISTS documents (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='文档元数据表';
 
 -- ============================================
+-- 1.1 document_company_scope_rel 表（文档-公司作用域）
+-- ============================================
+CREATE TABLE IF NOT EXISTS document_company_scope_rel (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    document_id BIGINT NOT NULL COMMENT '文档ID',
+    company_id VARCHAR(128) NOT NULL COMMENT '公司/分公司作用域ID',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE INDEX uk_document_company_scope_rel (document_id, company_id),
+    INDEX idx_dcsr_document_id (document_id),
+    INDEX idx_dcsr_company_id (company_id),
+    CONSTRAINT fk_dcsr_document FOREIGN KEY (document_id) REFERENCES documents (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='文档-公司作用域关联表';
+
+-- ============================================
 -- 2. tags 表（标签字典）
 -- ============================================
 CREATE TABLE IF NOT EXISTS tags (
@@ -76,6 +92,22 @@ CREATE TABLE IF NOT EXISTS knowledge_tag_rel (
     CONSTRAINT fk_rel_knowledge FOREIGN KEY (knowledge_id) REFERENCES knowledge_points (id) ON DELETE CASCADE,
     CONSTRAINT fk_rel_tag FOREIGN KEY (tag_id) REFERENCES tags (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识点-标签多对多关联表';
+
+-- ============================================
+-- 4.1 question_company_scope_rel 表（无文档题目-公司作用域）
+-- ============================================
+CREATE TABLE IF NOT EXISTS question_company_scope_rel (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    question_type VARCHAR(16) NOT NULL COMMENT '题型: single/multiple/judge/essay',
+    question_id INT NOT NULL COMMENT '题目ID',
+    company_id VARCHAR(128) NOT NULL COMMENT '公司/分公司作用域ID',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE INDEX uk_question_company_scope_rel (question_type, question_id, company_id),
+    INDEX idx_qcsr_question_type_id (question_type, question_id),
+    INDEX idx_qcsr_company_id (company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='题目-公司作用域关联表（用于无文档题目）';
 
 -- ============================================
 -- 完成
